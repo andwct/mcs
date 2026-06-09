@@ -9,10 +9,7 @@ settings = get_settings()
 
 
 def load_one_properties() -> dict[str, str]:
-    """
-    Parse one.properties (key=value format) from ConfigMap mount path.
-    Returns a flat dict of all properties.
-    """
+    """Parse one.properties (key=value) from ConfigMap mount path."""
     props_path = Path(settings.CONFIGMAP_MOUNT_PATH) / settings.CONFIGMAP_ONE_PROPERTIES
     if not props_path.exists():
         raise FileNotFoundError(f"one.properties not found at {props_path}")
@@ -31,10 +28,7 @@ def load_one_properties() -> dict[str, str]:
 
 
 def load_product_configs() -> list[ProductConfig]:
-    """
-    Scan ConfigMap mount path for product_*.json files.
-    Parse and return a list of ProductConfig objects.
-    """
+    """Scan ConfigMap mount for product_*.json and return ProductConfig list."""
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
     product_files = sorted(mount.glob("product_*.json"))
 
@@ -58,14 +52,21 @@ def load_product_configs() -> list[ProductConfig]:
     return products
 
 
-def get_all_function_subjects(products: list[ProductConfig]) -> list[tuple[str, str, str]]:
+def get_all_function_subjects(
+    products: list[ProductConfig],
+) -> list[tuple[str, str, str, str]]:
     """
-    Return a flat list of (product_id, func_id, subject) tuples across all products.
+    Return flat list of (product_id, func_id, sanitized_name, subject).
+
+    sanitized_name comes directly from FUNC_NAME_MAPPING in product_*.json —
+    never derived by splitting the subject string.
+
     subject = "{func_id}-{sanitized_name}"
     """
     result = []
     for product in products:
         for func_id in product.FUNCTION_LIST:
+            sanitized_name = product.get_sanitized_name(func_id)
             subject = product.get_subject(func_id)
-            result.append((product.PRODUCT_ID, func_id, subject))
+            result.append((product.PRODUCT_ID, func_id, sanitized_name, subject))
     return result

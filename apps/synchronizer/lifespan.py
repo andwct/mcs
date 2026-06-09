@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -10,6 +9,7 @@ from core.config.settings import get_settings
 from apps.synchronizer.consumers import (
     ensure_artifact_consumer,
     ensure_metadata_consumer,
+    artifact_deliver_subject,
 )
 from apps.synchronizer.handlers import handle_artifact_message
 from apps.synchronizer.fetch_loop import start_fetch_loops, cancel_fetch_loops
@@ -17,7 +17,6 @@ from apps.synchronizer.fetch_loop import start_fetch_loops, cancel_fetch_loops
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Readiness flag — /health checks this
 _ready: bool = False
 
 
@@ -30,41 +29,40 @@ async def lifespan(app: FastAPI):
     global _ready
     logger.info("Synchronizer starting up")
 
-    # 1. Load ConfigMap
+    # 1. Load ConfigMap — raises FileNotFoundError → pod restarts
     products = load_product_configs()
+    # Now returns (product_id, func_id, sanitized_name, subject)
+    # sanitized_name sourced directly from FUNC_NAME_MAPPING, never from subject string
     func_subjects = get_all_function_subjects(products)
     logger.info(f"Loaded {len(products)} products, {len(func_subjects)} function subjects")
 
     # 2. Connect NATS
     nc, js = await nats_connect()
 
-    # 3. Verify streams exist — RuntimeError → pod restarts
+    # 3. Verify streams — RuntimeError → pod restarts
     await verify_stream(js, settings.NATS_ARTIFACT_STREAM)
     await verify_stream(js, settings.NATS_METADATA_STREAM)
 
-    # 4. Connect Redis
+    # 4. Connect Redis Sentinel — RuntimeError on ping fail → pod restarts
     await redis_connect()
 
-    # 5. Resolve pod name
+    # 5. Resolve pod name from HOSTNAME env var (K8s downward API)
     pod_name = get_pod_name()
     logger.info(f"Running as pod: {pod_name}")
 
-    # 6. For each function_id: create consumers + subscribe
-    for product_id, func_id, subject in func_subjects:
-        sanitized = subject.split("-", 1)[1]
+    # 6. Per func_id: create consumers + subscribe to artifact deliver subject
+    for product_id, func_id, sanitized_name, subject in func_subjects:
 
-        # Artifact push consumer (unique per pod + func_id)
+        # Artifact push consumer — unique per (pod, func_id), broadcast fan-out
         await ensure_artifact_consumer(js, pod_name, func_id, subject)
+        deliver_subj = artifact_deliver_subject(pod_name, func_id)
+        await nc.subscribe(deliver_subj, cb=handle_artifact_message)
+        logger.info(f"Subscribed to artifact deliver: {deliver_subj}")
 
-        # Subscribe to this pod's deliver subject
-        deliver_subject = f"artifact-sync-{pod_name}-{func_id}.deliver"
-        await nc.subscribe(deliver_subject, cb=handle_artifact_message)
-        logger.info(f"Subscribed to artifact deliver: {deliver_subject}")
+        # Metadata pull consumer — shared durable, queue group semantics via fetch()
+        await ensure_metadata_consumer(js, func_id, sanitized_name, subject)
 
-        # Metadata pull consumer (shared across pods)
-        await ensure_metadata_consumer(js, func_id, sanitized, subject)
-
-    # 7. Start fetch loops for all metadata pull consumers
+    # 7. Start one fetch loop asyncio.Task per func_id for metadata pull consumer
     await start_fetch_loops(js, func_subjects)
 
     _ready = True
