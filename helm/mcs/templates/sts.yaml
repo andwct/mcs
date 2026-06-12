@@ -19,6 +19,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccountName }}
       containers:
 
+{{- if .Values.apps.mcs.enabled }}
         # ── mcs (FastAPI serving) ─────────────────────────────────────────
         - name: mcs
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -79,6 +80,8 @@ spec:
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
 
+{{- end }}
+{{- if .Values.apps.synchronizer.enabled }}
         # ── synchronizer (NATS consumer) ─────────────────────────────────
         - name: synchronizer
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -139,6 +142,8 @@ spec:
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
 
+{{- end }}
+{{- if .Values.apps.janitor.enabled }}
         # ── janitor (PVC eviction) ────────────────────────────────────────
         - name: janitor
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -183,6 +188,7 @@ spec:
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
 
+{{- end }}
       volumes:
         - name: product-config
           configMap:

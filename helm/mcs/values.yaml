@@ -20,8 +20,14 @@ replicaCount: 3
 
 # ── Container apps ─────────────────────────────────────────────────────────
 # All three containers share the same image; only appModule + port differ.
+#
+# `enabled: false` removes the container from the StatefulSet entirely.
+# apps/mcs and apps/janitor are currently empty stubs (not yet implemented)
+# — leave them disabled until those apps are built, so the StatefulSet can
+# be deployed and tested with just the synchronizer container.
 apps:
   mcs:
+    enabled: false
     appModule: apps.mcs.main:app
     port: 80
     resources:
@@ -32,6 +38,7 @@ apps:
         cpu: "2"
         memory: "16Gi"
   synchronizer:
+    enabled: true
     appModule: apps.synchronizer.main:app
     port: 81
     resources:
@@ -42,6 +49,7 @@ apps:
         cpu: "2"
         memory: "16Gi"
   janitor:
+    enabled: false
     appModule: apps.janitor.main:app
     port: 82
     resources:
