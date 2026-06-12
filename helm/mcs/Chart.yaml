@@ -1,11 +1,13 @@
 apiVersion: v2
 name: mcs
-description: A Helm chart
+description: Model Caching Service — site-local CDN-pattern cache for ML model artifacts
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
 
+# Deployers: set `version` below to the published MCS chart version
+# from the Nexus chart repository to pull the desired release.
 dependencies:
-  -name: mcs
-   version: 1.0.13
-   repository: "https://devtest.nexus.dummy.com/chartrepo/mlp"
+  - name: mcs
+    version: 1.0.13
+    repository: "https://devtest.nexus.dummy.com/chartrepo/mlp"

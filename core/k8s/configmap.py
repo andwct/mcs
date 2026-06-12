@@ -28,12 +28,18 @@ def load_one_properties() -> dict[str, str]:
 
 
 def load_product_configs() -> list[ProductConfig]:
-    """Scan ConfigMap mount for product_*.json and return ProductConfig list."""
+    """
+    Scan ConfigMap mount for product JSON files and return ProductConfig list.
+
+    Product files are named "{ProductName}.json" (e.g. "ABC.json") and are
+    distinguished from one.properties by file extension. All *.json files
+    in the mount path are treated as product configs.
+    """
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
-    product_files = sorted(mount.glob("product_*.json"))
+    product_files = sorted(mount.glob("*.json"))
 
     if not product_files:
-        raise FileNotFoundError(f"No product_*.json files found in {mount}")
+        raise FileNotFoundError(f"No product *.json files found in {mount}")
 
     products: list[ProductConfig] = []
     for f in product_files:

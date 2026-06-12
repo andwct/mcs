@@ -1,0 +1,36 @@
+# ── Env ConfigMap ─────────────────────────────────────────────────────────────
+# Populates core/config/settings.py via envFrom in all 3 containers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcs.envConfigMapName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mcs.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  JANITOR_INTERVAL_SECONDS: {{ .Values.janitor.intervalSeconds | quote }}
+  JANITOR_HIGH_WATERMARK: {{ .Values.janitor.highWatermark | quote }}
+  JANITOR_LOW_WATERMARK: {{ .Values.janitor.lowWatermark | quote }}
+
+---
+# ── Product Config ConfigMap ──────────────────────────────────────────────────
+# Mounted as a volume at env.CONFIGMAP_MOUNT_PATH (/etc/config).
+# Contains one.properties + one JSON file per product, parsed by
+# core/k8s/configmap.py (load_one_properties, load_product_configs).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcs.productConfigMapName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mcs.labels" . | nindent 4 }}
+data:
+  {{ .Values.env.CONFIGMAP_ONE_PROPERTIES }}: |
+{{ .Values.productConfig.oneProperties | indent 4 }}
+  {{- range $filename, $content := .Values.productConfig.products }}
+  {{ $filename }}: |
+{{ $content | indent 4 }}
+  {{- end }}
