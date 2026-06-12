@@ -16,10 +16,10 @@ data:
 ---
 # ── Product Config ConfigMap ──────────────────────────────────────────────────
 # Mounted as a volume at envConfig.CONFIGMAP_MOUNT_PATH (/etc/config).
-# - one.properties is auto-generated from .Values.envConfig (same source as
-#   the env ConfigMap above) — no duplication.
-# - One JSON file per product, parsed by core/k8s/configmap.py
-#   (load_one_properties, load_product_configs).
+# - envConfig.json: same data as the env ConfigMap above, rendered as JSON
+#   (single source of truth — no duplication). Loaded by
+#   core/k8s/configmap.py:load_env_config().
+# - One JSON file per product, loaded by load_product_configs().
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -28,10 +28,8 @@ metadata:
   labels:
     {{- include "mcs.labels" . | nindent 4 }}
 data:
-  {{ .Values.envConfig.CONFIGMAP_ONE_PROPERTIES }}: |
-    {{- range $key, $value := .Values.envConfig }}
-    {{ $key }}={{ $value }}
-    {{- end }}
+  {{ .Values.envConfig.CONFIGMAP_ENV_CONFIG_FILE }}: |
+{{ .Values.envConfig | toJson | indent 4 }}
   {{- range $filename, $content := .Values.productConfig.products }}
   {{ $filename }}: |
 {{ $content | indent 4 }}

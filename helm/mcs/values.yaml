@@ -121,11 +121,15 @@ storage:
 # ════════════════════════════════════════════════════════════════════════════
 # Configuration — single source of truth, rendered into two ConfigMaps:
 #   1. envConfig      -> env-config ConfigMap (envFrom, populates settings.py)
-#                         also rendered as one.properties (key=value lines)
-#                         inside product-config ConfigMap
+#                         also rendered as envConfig.json inside
+#                         product-config ConfigMap
 #   2. productConfig  -> product-config ConfigMap ({Product}.json files),
-#                         mounted alongside one.properties at
+#                         mounted alongside envConfig.json at
 #                         envConfig.CONFIGMAP_MOUNT_PATH (/etc/config)
+#
+# All mounted config files use JSON — envConfig.json (flat key-value) and
+# {Product}.json (nested product/function config) share one format and one
+# loader convention.
 # ════════════════════════════════════════════════════════════════════════════
 
 envConfig:
@@ -153,7 +157,7 @@ envConfig:
 
   # ConfigMap mount (product configs)
   CONFIGMAP_MOUNT_PATH: "/etc/config"
-  CONFIGMAP_ONE_PROPERTIES: "one.properties"
+  CONFIGMAP_ENV_CONFIG_FILE: "envConfig.json"
 
   # Janitor
   JANITOR_INTERVAL_SECONDS: "300"
@@ -165,7 +169,7 @@ envConfig:
   APP_NAME: "mcs"
 
 # productConfig: one {productName}.json entry per product. Mounted
-# alongside the auto-generated one.properties at CONFIGMAP_MOUNT_PATH.
+# alongside the auto-generated envConfig.json at CONFIGMAP_MOUNT_PATH.
 productConfig:
   products:
     ABC.json: |
