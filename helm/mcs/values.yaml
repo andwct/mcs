@@ -118,9 +118,17 @@ storage:
     enabled: true
     prefix: "netapp-san-ssd-dc"   # -> netapp-san-ssd-dc1, dc2, dc3
 
-# ── Env ConfigMap (settings.py env vars) ─────────────────────────────────────
-# These populate core/config/settings.py via envFrom.
-env:
+# ════════════════════════════════════════════════════════════════════════════
+# Configuration — single source of truth, rendered into two ConfigMaps:
+#   1. envConfig      -> env-config ConfigMap (envFrom, populates settings.py)
+#                         also rendered as one.properties (key=value lines)
+#                         inside product-config ConfigMap
+#   2. productConfig  -> product-config ConfigMap ({Product}.json files),
+#                         mounted alongside one.properties at
+#                         envConfig.CONFIGMAP_MOUNT_PATH (/etc/config)
+# ════════════════════════════════════════════════════════════════════════════
+
+envConfig:
   LOG_LEVEL: "INFO"
   STORAGE_PATH: "/mnt/models"
 
@@ -147,21 +155,17 @@ env:
   CONFIGMAP_MOUNT_PATH: "/etc/config"
   CONFIGMAP_ONE_PROPERTIES: "one.properties"
 
+  # Janitor
+  JANITOR_INTERVAL_SECONDS: "300"
+  JANITOR_HIGH_WATERMARK: "0.90"
+  JANITOR_LOW_WATERMARK: "0.75"
+
   # Misc / stage
   STAGE_NAME: "SIT"
   APP_NAME: "mcs"
 
-# ── Janitor ────────────────────────────────────────────────────────────────
-janitor:
-  intervalSeconds: 300
-  highWatermark: "0.90"
-  lowWatermark: "0.75"
-
-# ── Product config ConfigMap ─────────────────────────────────────────────────
-# Mounted at env.CONFIGMAP_MOUNT_PATH (/etc/config).
-# one.properties is auto-generated from the `env:` block above (single
-# source of truth — no duplication). Add one {productName}.json entry per
-# product below.
+# productConfig: one {productName}.json entry per product. Mounted
+# alongside the auto-generated one.properties at CONFIGMAP_MOUNT_PATH.
 productConfig:
   products:
     ABC.json: |

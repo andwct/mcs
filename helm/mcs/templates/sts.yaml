@@ -61,7 +61,7 @@ spec:
             - name: model-cache
               mountPath: {{ .Values.storage.mountPath }}
             - name: product-config
-              mountPath: {{ .Values.env.CONFIGMAP_MOUNT_PATH }}
+              mountPath: {{ .Values.envConfig.CONFIGMAP_MOUNT_PATH }}
               readOnly: true
             - name: mcs-secrets
               mountPath: {{ .Values.secret.mountPath }}
@@ -121,7 +121,7 @@ spec:
             - name: model-cache
               mountPath: {{ .Values.storage.mountPath }}
             - name: product-config
-              mountPath: {{ .Values.env.CONFIGMAP_MOUNT_PATH }}
+              mountPath: {{ .Values.envConfig.CONFIGMAP_MOUNT_PATH }}
               readOnly: true
             - name: mcs-secrets
               mountPath: {{ .Values.secret.mountPath }}
