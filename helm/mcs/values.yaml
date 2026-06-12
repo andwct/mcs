@@ -159,18 +159,10 @@ janitor:
 
 # ── Product config ConfigMap ─────────────────────────────────────────────────
 # Mounted at env.CONFIGMAP_MOUNT_PATH (/etc/config).
-# one.properties is parsed by core/k8s/configmap.py.
-# Add one {productName}.json entry per product under `products`.
+# one.properties is auto-generated from the `env:` block above (single
+# source of truth — no duplication). Add one {productName}.json entry per
+# product below.
 productConfig:
-  oneProperties: |
-    STORAGE_PATH=/mnt/models
-    LOG_LEVEL=INFO
-    SITE_AUTHORIZATION_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
-    SITE_ARTIFACT_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
-    SITE_META_CACHE_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
-    APP_NAME=mcs
-    STAGE_NAME=SIT
-
   products:
     ABC.json: |
       {
