@@ -96,16 +96,36 @@ virtualService:
       port: 8082
 
 # ── Secrets (Vault) ────────────────────────────────────────────────────────
-# Secrets are synced from internal Vault and mounted as a K8s Secret.
-# This Secret provides: NATS creds, Redis password, Basic Auth credentials.
-secret:
-  name: mcs-secrets
-  vaultPath: kv-mlp/mlop-secret/mcs
-  mountPath: /root/mcs-secret
-  natsCredsKey: nats.creds
-  redisPasswordKey: redis-password
-  modelCenterAccountKey: model-center-account
-  modelCenterPasswordKey: model-center-password
+# Each entry creates a ricoberger.de VaultSecret resource, syncing ALL keys
+# found at `path` into a K8s Secret named `name`. Add one entry per Vault
+# path you need to sync.
+vaultSecrets:
+  - name: mcs-secrets
+    path: kv-mlp/mlop-secret/mcs
+    namespace: mlop-site-model-center
+    releasename: mcs
+
+# secretRefs: which K8s Secret + key holds each credential consumed by the
+# StatefulSet containers. Defaults assume all credentials live in the single
+# mcs-secrets Secret synced above — split across multiple vaultSecrets
+# entries (and update the name/key pairs below) if your credentials live
+# at different Vault paths.
+secretRefs:
+  natsCreds:
+    name: mcs-secrets
+    key: nats.creds
+  redisPassword:
+    name: mcs-secrets
+    key: redis-password
+  modelCenterAccount:
+    name: mcs-secrets
+    key: model-center-account
+  modelCenterPassword:
+    name: mcs-secrets
+    key: model-center-password
+
+# Mount path for the nats.creds file inside the synchronizer container.
+secretMountPath: /root/mcs-secret
 
 # ── Storage ─────────────────────────────────────────────────────────────────
 # Per-ordinal zonal StorageClass: mcs-0 -> dc1, mcs-1 -> dc2, mcs-2 -> dc3
