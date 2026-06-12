@@ -1,0 +1,11 @@
+apiVersion: v2
+name: mcs
+description: A Helm chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+dependencies:
+  -name: mcs
+   version: 1.0.13
+   repository: "https://devtest.nexus.dummy.com/chartrepo/mlp"
