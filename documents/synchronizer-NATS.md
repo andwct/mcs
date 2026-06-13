@@ -161,32 +161,85 @@ e.g. if `fullnameOverride: mcs-statefulset`, the user is
 deployment-unique (which it must be, per Task "Consumer scope redesign"),
 this naming requires no additional site/environment identifier.
 
-```bash
-# 1. Select the siteMC operator + account context (adjust names to your setup)
-nsc env -o <SITEMC_OPERATOR>
-nsc env -a <SITEMC_ACCOUNT>
+Full script (also at `documents/generate-mcs-creds.sh`) — edit
+`STATEFULSET_NAME` and `NATS_URL` at the top, then run via
+[`synadia/nats-box`](https://github.com/synadia-io/nats-box) (bundles
+`nsc` + `nats` CLI + `nk`):
 
-# 2. Create a dedicated user for this MCS deployment's synchronizer.
-#    <STATEFULSET_NAME> = .Values.fullnameOverride (e.g. mcs-statefulset)
-nsc add user mcs-<STATEFULSET_NAME>-synchronizer \
-  --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-ARTIFACT' \
-  --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-METADATA' \
-  --allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-ARTIFACT.>' \
-  --allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-METADATA.>' \
-  --allow-pub '$JS.API.CONSUMER.DURABLE.CREATE.MLOP-MCS-ARTIFACT.>' \
-  --allow-pub '$JS.API.CONSUMER.DURABLE.CREATE.MLOP-MCS-METADATA.>' \
-  --allow-pub '$JS.API.CONSUMER.INFO.MLOP-MCS-ARTIFACT.>' \
-  --allow-pub '$JS.API.CONSUMER.INFO.MLOP-MCS-METADATA.>' \
-  --allow-pub '$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-METADATA.>' \
-  --allow-pub '$JS.API.CONSUMER.DELETE.MLOP-MCS-ARTIFACT.>' \
-  --allow-sub 'artifact-sync-<STATEFULSET_NAME>-*.deliver' \
+```bash
+docker run --rm -it -v $(pwd):/work -w /work synadia/nats-box:latest \
+  bash documents/generate-mcs-creds.sh
+```
+
+```bash
+#!/bin/bash
+# ============================================================================
+# Generate nats.creds for an MCS synchronizer deployment
+#
+# Run inside the synadia/nats-box container, which bundles nsc + nats CLI:
+#
+#   docker run --rm -it -v $(pwd):/work -w /work synadia/nats-box:latest \
+#     bash generate-mcs-creds.sh
+#
+# Or, if nsc/nats are installed locally, just run this script directly.
+# ============================================================================
+set -euo pipefail
+
+# ── EDIT THIS ───────────────────────────────────────────────────────────────
+SITEMC_OPERATOR="mlp"                        # siteMC NATS operator (only one exists)
+SITEMC_ACCOUNT="mlop"                        # siteMC NATS account
+STATEFULSET_NAME="<STATEFULSET_NAME>"        # .Values.fullnameOverride, e.g. mcs-statefulset
+NATS_URL="<NATS_URL>"                        # e.g. nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
+
+ARTIFACT_STREAM="MLOP-MCS-ARTIFACT"
+METADATA_STREAM="MLOP-MCS-METADATA"
+USER_NAME="mcs-${STATEFULSET_NAME}-synchronizer"
+OUTPUT_CREDS="nats.creds"
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo "== Selecting operator/account context =="
+nsc env -o "${SITEMC_OPERATOR}"
+nsc env -a "${SITEMC_ACCOUNT}"
+
+echo "== Creating user: ${USER_NAME} =="
+
+# If the user already exists from a previous run, remove it first so the
+# permission set below is applied cleanly (nsc add user fails if it exists).
+if nsc describe user "${USER_NAME}" >/dev/null 2>&1; then
+  echo "User ${USER_NAME} already exists — deleting before recreate"
+  nsc delete user "${USER_NAME}"
+fi
+
+nsc add user "${USER_NAME}" \
+  --allow-pub "\$JS.API.STREAM.INFO.${ARTIFACT_STREAM}" \
+  --allow-pub "\$JS.API.STREAM.INFO.${METADATA_STREAM}" \
+  --allow-pub "\$JS.API.CONSUMER.CREATE.${ARTIFACT_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.CREATE.${METADATA_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.DURABLE.CREATE.${ARTIFACT_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.DURABLE.CREATE.${METADATA_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.INFO.${ARTIFACT_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.INFO.${METADATA_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.MSG.NEXT.${METADATA_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.DELETE.${ARTIFACT_STREAM}.>" \
+  --allow-sub "artifact-sync-${STATEFULSET_NAME}-*.deliver" \
   --allow-sub '_INBOX.>'
 
-# 3. Generate the .creds file (JWT + NKey seed bundled together)
-nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-<STATEFULSET_NAME>-synchronizer > nats.creds
+echo "== Generating ${OUTPUT_CREDS} =="
+nsc generate creds -a "${SITEMC_ACCOUNT}" -n "${USER_NAME}" > "${OUTPUT_CREDS}"
+echo "Wrote ${OUTPUT_CREDS}"
 
-# 4. Push contents into Vault at the path configured in values.yaml
-#    (vaultSecrets[0].path, e.g. kv-mlp/mlop-secret/mcs), key "nats.creds"
+echo "== Verifying connectivity =="
+if command -v nats >/dev/null 2>&1; then
+  nats account info --creds "${OUTPUT_CREDS}" --server "${NATS_URL}"
+else
+  echo "nats CLI not found — skipping connectivity check."
+  echo "Run manually: nats account info --creds ${OUTPUT_CREDS} --server ${NATS_URL}"
+fi
+
+echo
+echo "== Done =="
+echo "Next: store the contents of ${OUTPUT_CREDS} in Vault at the path"
+echo "configured in values.yaml (vaultSecrets[0].path), under key 'nats.creds'."
 ```
 
 **Notes:**
