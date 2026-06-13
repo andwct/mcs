@@ -7,9 +7,21 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# JetStream API error codes (https://docs.nats.io/running-a-nats-service/nats_admin/jetstream_admin/jetstream_errors)
-# "consumer already exists" / "consumer name already in use"
-JS_ERR_CONSUMER_ALREADY_EXISTS = {10013, 10148}
+# JetStream API error code for "consumer name already in use"
+# (nats-server jsapi_errors.go: JSConsumerNameExistErr).
+# This is the one we're confident about. As a fallback (in case the
+# server returns a different/older code for the same condition), we also
+# match on description text containing "already" — logged either way so
+# any unexpected err_code is visible and can be added here explicitly.
+JS_ERR_CONSUMER_NAME_EXISTS = 10013
+
+
+def _is_already_exists_error(e: APIError) -> bool:
+    if e.err_code == JS_ERR_CONSUMER_NAME_EXISTS:
+        return True
+    if e.description and "already" in e.description.lower():
+        return True
+    return False
 
 
 def artifact_consumer_name(pod_name: str, func_id: str) -> str:
@@ -56,8 +68,11 @@ async def ensure_artifact_consumer(
         )
         logger.info(f"Artifact push consumer created: {name} -> {deliver_subj}")
     except APIError as e:
-        if e.err_code in JS_ERR_CONSUMER_ALREADY_EXISTS:
-            logger.info(f"Artifact push consumer already exists: {name} (reusing)")
+        if _is_already_exists_error(e):
+            logger.info(
+                f"Artifact push consumer already exists: {name} (reusing). "
+                f"err_code={e.err_code} description={e.description}"
+            )
         else:
             logger.error(
                 f"Failed to create artifact push consumer '{name}' on "
@@ -105,8 +120,11 @@ async def ensure_metadata_consumer(
         )
         logger.info(f"Metadata pull consumer created: {name}")
     except APIError as e:
-        if e.err_code in JS_ERR_CONSUMER_ALREADY_EXISTS:
-            logger.info(f"Metadata pull consumer already exists: {name} (reusing, shared across pods)")
+        if _is_already_exists_error(e):
+            logger.info(
+                f"Metadata pull consumer already exists: {name} (reusing, shared "
+                f"across pods). err_code={e.err_code} description={e.description}"
+            )
         else:
             logger.error(
                 f"Failed to create metadata pull consumer '{name}' on "

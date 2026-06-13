@@ -44,8 +44,12 @@ the `*.json` fix. Fixed: all three now read `apps.<name>.main:app`.
 
 **Idempotency / error handling (this branch):** `ensure_artifact_consumer`
 now distinguishes:
-- `APIError` with `err_code` in `{10013, 10148}` ("consumer already
-  exists") -> log info, reuse (expected on every pod restart)
+- "consumer already exists" — detected via JetStream API error code
+  `10013` (`JSConsumerNameExistErr`, the documented nats-server code for
+  "consumer name already in use"), with a fallback check on `description`
+  containing "already" in case a different server version returns a
+  different code -> log info (with `err_code`/`description` for
+  visibility), reuse (expected on every pod restart)
 - any other `APIError` or exception -> log error with `err_code` +
   `description`, raise `RuntimeError` -> pod restarts (no silent failures)
 
