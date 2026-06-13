@@ -11,9 +11,9 @@
 # ============================================================================
 set -euo pipefail
 
-# ── EDIT THESE ──────────────────────────────────────────────────────────────
-SITEMC_OPERATOR="<SITEMC_OPERATOR>"          # existing siteMC NATS operator name
-SITEMC_ACCOUNT="<SITEMC_ACCOUNT>"            # existing siteMC NATS account name
+# ── EDIT THIS ───────────────────────────────────────────────────────────────
+SITEMC_OPERATOR="mlp"                        # siteMC NATS operator (only one exists)
+SITEMC_ACCOUNT="mlop"                        # siteMC NATS account
 STATEFULSET_NAME="<STATEFULSET_NAME>"        # .Values.fullnameOverride, e.g. mcs-statefulset
 NATS_URL="<NATS_URL>"                        # e.g. nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
 
