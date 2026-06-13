@@ -1,205 +1,213 @@
-# ════════════════════════════════════════════════════════════════════════════
-# MCS Helm Chart — values.yaml
-#
-# Deployers (AI/ML SRE): edit this file to configure your MCS deployment.
-# Do NOT edit templates/ — all customization happens here.
-# ════════════════════════════════════════════════════════════════════════════
-
-# ── Naming ──────────────────────────────────────────────────────────────────
-fullnameOverride: mcs-statefulset
-namespace: mlop-site-model-center
-serviceAccountName: default
-
-# ── Image ───────────────────────────────────────────────────────────────────
-image:
-  repository: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
-  tag: "1.0.0"
-  pullPolicy: IfNotPresent
-
+# ── Image ─────────────────────────────────────────────────────────────────────
+name: mcs-statefulset
+fullnameOverride: mcs-statefulset-storage-mcs-statefulset
+app: mcs
+serviceName: mcs-service
 replicaCount: 3
+serviceAccountName: default
+configMapName: mcs-configMapName
+volumeMounts:
+  - mountPath: /mnt/mcs
+    name: mcs-statefulset-storage
+  - mountPath: /etc/config
+    name: mcs-configMapName
+  - mountPath: /root/mcs-secret
+    name: mcs-secrets
 
-# ── Container apps ─────────────────────────────────────────────────────────
-# All three containers share the same image; only appModule + port differ.
-#
-# `enabled: false` removes the container from the StatefulSet entirely.
-# apps/mcs and apps/janitor are currently empty stubs (not yet implemented)
-# — leave them disabled until those apps are built, so the StatefulSet can
-# be deployed and tested with just the synchronizer container.
-apps:
-  mcs:
-    enabled: false
-    appModule: apps.mcs.main:app
-    port: 80
-    resources:
-      requests:
-        cpu: "0.1"
-        memory: "2Gi"
-      limits:
-        cpu: "2"
-        memory: "16Gi"
-  synchronizer:
-    enabled: true
-    appModule: apps.synchronizer.main:app
-    port: 81
-    resources:
-      requests:
-        cpu: "0.1"
-        memory: "2Gi"
-      limits:
-        cpu: "2"
-        memory: "16Gi"
-  janitor:
-    enabled: false
-    appModule: apps.janitor.main:app
-    port: 82
-    resources:
-      requests:
-        cpu: "0.1"
-        memory: "2Gi"
-      limits:
-        cpu: "2"
-        memory: "16Gi"
-
-probes:
-  readiness:
-    path: /health
+#Container Configs
+mcs:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.mcs.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 80
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 80
     initialDelaySeconds: 15
     periodSeconds: 10
-  liveness:
-    path: /health
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 30
+synchronizer:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.synchronizer.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 81
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 81
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 81
+    initialDelaySeconds: 10
+    periodSeconds: 30
+janitor:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.janitor.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 82
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 82
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 82
     initialDelaySeconds: 10
     periodSeconds: 30
 
-# ── Service ─────────────────────────────────────────────────────────────────
+###Individual replicas
 service:
   ports:
-    - name: mcs-port
-      protocol: TCP
+    - protocol: TCP
       port: 8080
       targetPort: 80
-    - name: synchronizer-port
-      protocol: TCP
+      name: mcs-port
+    - protocol: TCP
       port: 8081
       targetPort: 81
-    - name: janitor-port
-      protocol: TCP
+      name: synchronizer-port
+    - protocol: TCP
       port: 8082
       targetPort: 82
+      name: janitor-port
 
-# ── VirtualService (Istio) ─────────────────────────────────────────────────
 virtualService:
-  enabled: true
   gateways:
     - mlop-site-model-center-test-central-gateway
+  mcsHostsPrefix: "mcs-mcs-replica"
+  synchronizerHostPrefix: "mcs-synchronizer-replica"
+  janitorHostPrefix: "mcs-janitor-replica"
   baseDomain: "mlop-site-model-center-test.ftest.dummy.com"
-  routes:
-    - name: mcs-mcs
-      host: "mcs-mcs-service.mlop-site-model-center-test.ftest.dummy.com"
-      port: 8080
-    - name: mcs-synchronizer
-      host: "mcs-synchronizer-service.mlop-site-model-center-test.ftest.dummy.com"
-      port: 8081
-    - name: mcs-janitor
-      host: "mcs-janitor-service.mlop-site-model-center-test.ftest.dummy.com"
-      port: 8082
 
-# ── Secrets (Vault) ────────────────────────────────────────────────────────
-# Each entry creates a ricoberger.de VaultSecret resource, syncing ALL keys
-# found at `path` into a K8s Secret named `name`. Add one entry per Vault
-# path you need to sync.
-vaultSecrets:
+serviceLB:
+  - name: mcs-service
+    app: mcs
+    ports:
+      - protocol: TCP
+        port: 8080
+        targetPort: 80
+        name: mcs-port-lb
+      - protocol: TCP
+        port: 8081
+        targetPort: 81
+        name: synchronizer-port-lb
+      - protocol: TCP
+        port: 8082
+        targetPort: 82
+        name: janitor-port-lb
+
+virtualServiceLB:
+  - name: mcs-mcs
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-mcs-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8080
+  - name: mcs-synchronizer
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-synchronizer-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8081
+  - name: mcs-janitor
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-janitor-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8082
+
+secret:
   - name: mcs-secrets
     path: kv-mlp/mlop-secret/mcs
     namespace: mlop-site-model-center
     releasename: mcs
 
-# secretRefs: which K8s Secret + key holds each credential consumed by the
-# StatefulSet containers. Defaults assume all credentials live in the single
-# mcs-secrets Secret synced above — split across multiple vaultSecrets
-# entries (and update the name/key pairs below) if your credentials live
-# at different Vault paths.
-secretRefs:
-  natsCreds:
-    name: mcs-secrets
-    key: nats.creds
-  redisPassword:
-    name: mcs-secrets
-    key: redis-password
-  modelCenterAccount:
-    name: mcs-secrets
-    key: model-center-account
-  modelCenterPassword:
-    name: mcs-secrets
-    key: model-center-password
-
-# Mount path for the nats.creds file inside the synchronizer container.
-secretMountPath: /root/mcs-secret
-
-# ── Storage ─────────────────────────────────────────────────────────────────
-# Per-ordinal zonal StorageClass: mcs-0 -> dc1, mcs-1 -> dc2, mcs-2 -> dc3
-# PVCs are pre-created by templates/pvc.yaml with names matching the
-# volumeClaimTemplate naming convention so the StatefulSet adopts them.
-storage:
-  mountPath: /mnt/models
-  size: "10Gi"
-  zonalStorageClass:
-    enabled: true
-    prefix: "netapp-san-ssd-dc"   # -> netapp-san-ssd-dc1, dc2, dc3
-
-# ════════════════════════════════════════════════════════════════════════════
-# Configuration — single source of truth, rendered into two ConfigMaps:
-#   1. envConfig      -> env-config ConfigMap (envFrom, populates settings.py)
-#                         also rendered as envConfig.json inside
-#                         product-config ConfigMap
-#   2. productConfig  -> product-config ConfigMap ({Product}.json files),
-#                         mounted alongside envConfig.json at
-#                         envConfig.CONFIGMAP_MOUNT_PATH (/etc/config)
+# ── ConfigMap ────────────────────────────────────────────────────────────────
+# TEMPORARY (rollback to v1.0.13 values.yaml shape): all new config —
+# NATS_URL, REDIS_SENTINEL_*, SITE_*_URL — lives inline in one.properties
+# (key=value format) instead of a separate envConfig.json/ConfigMap.
 #
-# All mounted config files use JSON — envConfig.json (flat key-value) and
-# {Product}.json (nested product/function config) share one format and one
-# loader convention.
-# ════════════════════════════════════════════════════════════════════════════
+# core/k8s/configmap.py:load_one_properties() parses this file and
+# apps/synchronizer/main.py loads it into os.environ at startup, before
+# get_settings() is first called, so settings.py picks up these values
+# even though the v1.0.13 StatefulSet template doesn't set them via envFrom.
+configMap:
+  namespace: mlop-site-model-center
+  data:
+    one.properties: |
+      STORAGE_PATH=/mnt/mcs
+      LOG_LEVEL=INFO
+      SITE_AUTHORIZATION_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      SITE_ARTIFACT_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      SITE_META_CACHE_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      APP_NAME=mcs
+      STAGE_NAME=SIT
+      CONFIGMAP_MOUNT_PATH=/etc/config
+      NATS_URL=nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
+      NATS_CREDS_FILE=/root/mcs-secret/nats.creds
+      NATS_ARTIFACT_STREAM=MLOP-MCS-ARTIFACT
+      NATS_METADATA_STREAM=MLOP-MCS-METADATA
+      NATS_ACK_WAIT_ARTIFACT_SECONDS=300
+      NATS_ACK_WAIT_METADATA_SECONDS=30
+      REDIS_SENTINEL_HOSTS=mcs-redis-sentinel-headless.mlop-site-model-center.svc.cluster.local
+      REDIS_SENTINEL_PORT=26379
+      REDIS_SENTINEL_MASTER_NAME=mymaster
+      REDIS_MODEL_LIST_KEY=mcs:model_list
+      JANITOR_INTERVAL_SECONDS=300
+      JANITOR_HIGH_WATERMARK=0.90
+      JANITOR_LOW_WATERMARK=0.75
 
-envConfig:
-  LOG_LEVEL: "INFO"
-  STORAGE_PATH: "/mnt/models"
-
-  # NATS — siteMC NATS, same namespace
-  NATS_URL: "nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222"
-  NATS_CREDS_FILE: "/root/mcs-secret/nats.creds"
-  NATS_ARTIFACT_STREAM: "MLOP-MCS-ARTIFACT"
-  NATS_METADATA_STREAM: "MLOP-MCS-METADATA"
-  NATS_ACK_WAIT_ARTIFACT_SECONDS: "300"
-  NATS_ACK_WAIT_METADATA_SECONDS: "30"
-
-  # Redis Sentinel — pre-existing Bitnami deployment, same namespace
-  REDIS_SENTINEL_HOSTS: "mcs-redis-sentinel-headless.mlop-site-model-center.svc.cluster.local"
-  REDIS_SENTINEL_PORT: "26379"
-  REDIS_SENTINEL_MASTER_NAME: "mymaster"
-  REDIS_MODEL_LIST_KEY: "mcs:model_list"
-
-  # siteMC HTTP services — same cluster, same namespace
-  SITE_AUTHORIZATION_URL: "http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com"
-  SITE_ARTIFACT_SERVICE_URL: "http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com"
-  SITE_META_CACHE_SERVICE_URL: "http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com"
-
-  # ConfigMap mount (product configs)
-  CONFIGMAP_MOUNT_PATH: "/etc/config"
-  CONFIGMAP_ENV_CONFIG_FILE: "envConfig.json"
-
-  # Janitor
-  JANITOR_INTERVAL_SECONDS: "300"
-  JANITOR_HIGH_WATERMARK: "0.90"
-  JANITOR_LOW_WATERMARK: "0.75"
-
-  # Misc / stage
-  STAGE_NAME: "SIT"
-  APP_NAME: "mcs"
-
-# productConfig: one {productName}.json entry per product. Mounted
-# alongside the auto-generated envConfig.json at CONFIGMAP_MOUNT_PATH.
-productConfig:
-  products:
     ABC.json: |
       {
         "PRODUCT_ID": "productID_ABC",
@@ -213,3 +221,10 @@ productConfig:
           "funcID_456": "funcName_456"
         }
       }
+
+persistence:
+  size: "10Gi"
+zonalStorageClass:
+  enabled: true
+  prefix: "netapp-san-ssd-dc"
+pvcName: mcs-statefulset-storage
