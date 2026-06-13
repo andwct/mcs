@@ -128,6 +128,11 @@ correctly appear in both consumers' `filter_subjects`.
 **Decision:** Platform engineers pre-create **streams only**
 (`MLOP-MCS-ARTIFACT`, `MLOP-MCS-METADATA` — already done ✅). MCS's NATS
 user needs permission to:
+- **query JetStream account info** (`$JS.API.INFO`) — used by
+  `nats account info` and `nats-py`'s `js.account_info()` during
+  connection setup; without this, connection fails with
+  `Permissions Violation for publish to $JS.API.INFO` /
+  "No response from Jetstream server"
 - **create consumers** on both streams (`$JS.API.CONSUMER.CREATE...`,
   `$JS.API.CONSUMER.DURABLE.CREATE...`)
 - **query consumer/stream info** (`$JS.API.CONSUMER.INFO...`,
@@ -211,6 +216,7 @@ if nsc describe user "${USER_NAME}" >/dev/null 2>&1; then
 fi
 
 nsc add user "${USER_NAME}" \
+  --allow-pub '$JS.API.INFO' \
   --allow-pub "\$JS.API.STREAM.INFO.${ARTIFACT_STREAM}" \
   --allow-pub "\$JS.API.STREAM.INFO.${METADATA_STREAM}" \
   --allow-pub "\$JS.API.CONSUMER.CREATE.${ARTIFACT_STREAM}.>" \

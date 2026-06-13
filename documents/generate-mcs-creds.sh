@@ -37,6 +37,7 @@ if nsc describe user "${USER_NAME}" >/dev/null 2>&1; then
 fi
 
 nsc add user "${USER_NAME}" \
+  --allow-pub '$JS.API.INFO' \
   --allow-pub "\$JS.API.STREAM.INFO.${ARTIFACT_STREAM}" \
   --allow-pub "\$JS.API.STREAM.INFO.${METADATA_STREAM}" \
   --allow-pub "\$JS.API.CONSUMER.CREATE.${ARTIFACT_STREAM}.>" \
