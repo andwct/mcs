@@ -1,73 +1,230 @@
 # ── Image ─────────────────────────────────────────────────────────────────────
-image:
-  repository: your-registry/mcs
-  tag: latest
-  pullPolicy: IfNotPresent
-
+name: mcs-statefulset
+fullnameOverride: mcs-statefulset-storage-mcs-statefulset
+app: mcs
+serviceName: mcs-service
 replicaCount: 3
+serviceAccountName: default
+configMapName: mcs-configMapName
+volumeMounts:
+  - mountPath: /mnt/mcs
+    name: mcs-statefulset-storage
+  - mountPath: /etc/config
+    name: mcs-configMapName
+  - mountPath: /root/mcs-secret
+    name: mcs-secrets
 
-# ── NATS ──────────────────────────────────────────────────────────────────────
-# Stream names must match streams pre-created in siteMC NATS by platform team.
-nats:
-  url: "nats://sitemc-nats:4222"
-  credsSecretName: "mcs-nats-creds"   # K8s secret containing nats.creds (from Vault VSO)
-  credsKey: "nats.creds"
-  streams:
-    artifact: "MLOP-MCS-ARTIFACT"     # deployer fills this in
-    metadata: "MLOP-MCS-METADATA"     # deployer fills this in
-  ackWait:
-    artifactSeconds: 300
-    metadataSeconds: 30
-
-# ── Redis Sentinel (Bitnami chart 18.2.0 / Redis 7.2.4) ──────────────────────
-redis:
-  sentinel:
-    hosts: "mcs-redis-headless"       # Bitnami headless service name
-    port: 26379
-    masterName: "mymaster"
-  passwordSecretName: "mcs-redis-secret"
-  passwordKey: "password"
-  modelListKey: "mcs:model_list"
-
-# ── siteMC HTTP services ──────────────────────────────────────────────────────
-siteMC:
-  artifactServiceUrl: "http://artifact-cache-service"
-  metaCacheServiceUrl: "http://meta-cache-service"
-
-# ── Auth (Basic Auth for MCS ↔ siteMC + clients ↔ MCS) ───────────────────────
-auth:
-  secretName: "mcs-auth-secret"
-
-# ── Storage (PVC per pod) ─────────────────────────────────────────────────────
-storage:
-  mountPath: "/mnt/models"
-  storageClassName: "standard"
-  size: "50Gi"
-
-# ── ConfigMap (product configs) ───────────────────────────────────────────────
-config:
-  mountPath: "/etc/config"
-
-# ── Janitor ───────────────────────────────────────────────────────────────────
-janitor:
-  intervalSeconds: 300
-  highWatermark: "0.90"
-  lowWatermark: "0.75"
-
-# ── Container ports ───────────────────────────────────────────────────────────
-ports:
-  mcs: 8080
-  synchronizer: 8081
-  janitor: 8082
-
-# ── Probes ────────────────────────────────────────────────────────────────────
-probes:
-  liveness:
-    initialDelaySeconds: 10
-    periodSeconds: 30
-  readiness:
+#Container Configs
+mcs:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.mcs.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 80
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 80
     initialDelaySeconds: 15
     periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 30
+synchronizer:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.synchronizer.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 81
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 81
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 81
+    initialDelaySeconds: 10
+    periodSeconds: 30
+janitor:
+  image: tcrtst.fart.dummy.com/devtest/mlp/mcs/mcs
+  tag: "1.0.13"
+  appModule: app.janitor.main:app
+  resources:
+    requests:
+      cpu: "0.1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+  ports:
+    - containerPort: 82
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 82
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 82
+    initialDelaySeconds: 10
+    periodSeconds: 30
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-logLevel: "INFO"
+###Individual replicas
+service:
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 80
+      name: mcs-port
+    - protocol: TCP
+      port: 8081
+      targetPort: 81
+      name: synchronizer-port
+    - protocol: TCP
+      port: 8082
+      targetPort: 82
+      name: janitor-port
+
+virtualService:
+  gateways:
+    - mlop-site-model-center-test-central-gateway
+  mcsHostsPrefix: "mcs-mcs-replica"
+  synchronizerHostPrefix: "mcs-synchronizer-replica"
+  janitorHostPrefix: "mcs-janitor-replica"
+  baseDomain: "mlop-site-model-center-test.ftest.dummy.com"
+
+serviceLB:
+  - name: mcs-service
+    app: mcs
+    ports:
+      - protocol: TCP
+        port: 8080
+        targetPort: 80
+        name: mcs-port-lb
+      - protocol: TCP
+        port: 8081
+        targetPort: 81
+        name: synchronizer-port-lb
+      - protocol: TCP
+        port: 8082
+        targetPort: 82
+        name: janitor-port-lb
+
+virtualServiceLB:
+  - name: mcs-mcs
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-mcs-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8080
+  - name: mcs-synchronizer
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-synchronizer-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8081
+  - name: mcs-janitor
+    namespace: mlop-site-model-center
+    gateways:
+      - mlop-site-model-center-test-central-gateway
+    hosts:
+      - mcs-janitor-service.mlop-site-model-center-test.ftest.dummy.com
+    http:
+      - route:
+        - destination:
+            host: mcs-service.mlop-site-model-center.svc.cluster.local
+            port: 8082
+
+secret:
+  - name: mcs-secrets
+    path: kv-mlp/mlop-secret/mcs
+    namespace: mlop-site-model-center
+    releasename: mcs
+
+# ── ConfigMap ────────────────────────────────────────────────────────────────
+# TEMPORARY (rollback to v1.0.13 values.yaml shape): all new config —
+# NATS_URL, REDIS_SENTINEL_*, SITE_*_URL — lives inline in one.properties
+# (key=value format) instead of a separate envConfig.json/ConfigMap.
+#
+# core/k8s/configmap.py:load_one_properties() parses this file and
+# apps/synchronizer/main.py loads it into os.environ at startup, before
+# get_settings() is first called, so settings.py picks up these values
+# even though the v1.0.13 StatefulSet template doesn't set them via envFrom.
+configMap:
+  namespace: mlop-site-model-center
+  data:
+    one.properties: |
+      STORAGE_PATH=/mnt/mcs
+      LOG_LEVEL=INFO
+      SITE_AUTHORIZATION_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      SITE_ARTIFACT_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      SITE_META_CACHE_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      APP_NAME=mcs
+      STAGE_NAME=SIT
+      CONFIGMAP_MOUNT_PATH=/etc/config
+      NATS_URL=nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
+      NATS_CREDS_FILE=/root/mcs-secret/nats.creds
+      NATS_ARTIFACT_STREAM=MLOP-MCS-ARTIFACT
+      NATS_METADATA_STREAM=MLOP-MCS-METADATA
+      NATS_ACK_WAIT_ARTIFACT_SECONDS=300
+      NATS_ACK_WAIT_METADATA_SECONDS=30
+      REDIS_SENTINEL_HOSTS=mcs-redis-sentinel-headless.mlop-site-model-center.svc.cluster.local
+      REDIS_SENTINEL_PORT=26379
+      REDIS_SENTINEL_MASTER_NAME=mymaster
+      REDIS_MODEL_LIST_KEY=mcs:model_list
+      JANITOR_INTERVAL_SECONDS=300
+      JANITOR_HIGH_WATERMARK=0.90
+      JANITOR_LOW_WATERMARK=0.75
+
+    ABC.json: |
+      {
+        "PRODUCT_ID": "productID_ABC",
+        "PRODUCT_NAME": "ABC",
+        "ENABLE_VAULT": true,
+        "MODEL_CENTER_ACCOUNT": "ABC",
+        "MODEL_CENTER_PASSWORD": "",
+        "FUNCTION_LIST": ["funcID_123", "funcID_456"],
+        "FUNCTION_NAME_MAPPING": {
+          "funcID_123": "funcName_123",
+          "funcID_456": "funcName_456"
+        }
+      }
+
+persistence:
+  size: "10Gi"
+zonalStorageClass:
+  enabled: true
+  prefix: "netapp-san-ssd-dc"
+pvcName: mcs-statefulset-storage

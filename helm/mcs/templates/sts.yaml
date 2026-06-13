@@ -1,0 +1,218 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mcs.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mcs.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "mcs.fullname" . }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mcs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcs.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccountName }}
+      containers:
+
+{{- if .Values.apps.mcs.enabled }}
+        # ── mcs (FastAPI serving) ─────────────────────────────────────────
+        - name: mcs
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - uvicorn
+            - {{ .Values.apps.mcs.appModule }}
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "{{ .Values.apps.mcs.port }}"
+          ports:
+            - containerPort: {{ .Values.apps.mcs.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mcs.envConfigMapName" . }}
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.redisPassword.name }}
+                  key: {{ .Values.secretRefs.redisPassword.key }}
+            - name: MODEL_CENTER_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.modelCenterAccount.name }}
+                  key: {{ .Values.secretRefs.modelCenterAccount.key }}
+            - name: MODEL_CENTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.modelCenterPassword.name }}
+                  key: {{ .Values.secretRefs.modelCenterPassword.key }}
+          resources:
+            {{- toYaml .Values.apps.mcs.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: {{ .Values.storage.mountPath }}
+            - name: product-config
+              mountPath: {{ .Values.envConfig.CONFIGMAP_MOUNT_PATH }}
+              readOnly: true
+            - name: mcs-secrets
+              mountPath: {{ .Values.secretMountPath }}
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.apps.mcs.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.apps.mcs.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+
+{{- end }}
+{{- if .Values.apps.synchronizer.enabled }}
+        # ── synchronizer (NATS consumer) ─────────────────────────────────
+        - name: synchronizer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - uvicorn
+            - {{ .Values.apps.synchronizer.appModule }}
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "{{ .Values.apps.synchronizer.port }}"
+          ports:
+            - containerPort: {{ .Values.apps.synchronizer.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mcs.envConfigMapName" . }}
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.redisPassword.name }}
+                  key: {{ .Values.secretRefs.redisPassword.key }}
+            - name: MODEL_CENTER_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.modelCenterAccount.name }}
+                  key: {{ .Values.secretRefs.modelCenterAccount.key }}
+            - name: MODEL_CENTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.modelCenterPassword.name }}
+                  key: {{ .Values.secretRefs.modelCenterPassword.key }}
+          resources:
+            {{- toYaml .Values.apps.synchronizer.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: {{ .Values.storage.mountPath }}
+            - name: product-config
+              mountPath: {{ .Values.envConfig.CONFIGMAP_MOUNT_PATH }}
+              readOnly: true
+            - name: mcs-secrets
+              mountPath: {{ .Values.secretMountPath }}
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.apps.synchronizer.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.apps.synchronizer.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+
+{{- end }}
+{{- if .Values.apps.janitor.enabled }}
+        # ── janitor (PVC eviction) ────────────────────────────────────────
+        - name: janitor
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - uvicorn
+            - {{ .Values.apps.janitor.appModule }}
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "{{ .Values.apps.janitor.port }}"
+          ports:
+            - containerPort: {{ .Values.apps.janitor.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mcs.envConfigMapName" . }}
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.redisPassword.name }}
+                  key: {{ .Values.secretRefs.redisPassword.key }}
+          resources:
+            {{- toYaml .Values.apps.janitor.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: {{ .Values.storage.mountPath }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.apps.janitor.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.apps.janitor.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+
+{{- end }}
+      volumes:
+        - name: product-config
+          configMap:
+            name: {{ include "mcs.productConfigMapName" . }}
+        - name: mcs-secrets
+          secret:
+            secretName: {{ .Values.secretRefs.natsCreds.name }}
+
+  {{- /*
+  volumeClaimTemplates name "model-cache" combined with the StatefulSet name
+  and ordinal produces PVC names "model-cache-<fullname>-<ordinal>", matching
+  the PVCs pre-created in pvc.yaml when zonalStorageClass.enabled is true.
+  When disabled, a single storageClassName is used for dynamic provisioning.
+  */}}
+  volumeClaimTemplates:
+    - metadata:
+        name: model-cache
+        labels:
+          {{- include "mcs.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if not .Values.storage.zonalStorageClass.enabled }}
+        storageClassName: {{ .Values.storage.zonalStorageClass.prefix }}1
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

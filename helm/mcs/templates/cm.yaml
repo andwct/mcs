@@ -1,0 +1,36 @@
+# ── Env ConfigMap ─────────────────────────────────────────────────────────────
+# Single source of truth (.Values.envConfig). Populates core/config/settings.py
+# via envFrom in all 3 containers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcs.envConfigMapName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mcs.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.envConfig }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+
+---
+# ── Product Config ConfigMap ──────────────────────────────────────────────────
+# Mounted as a volume at envConfig.CONFIGMAP_MOUNT_PATH (/etc/config).
+# - envConfig.json: same data as the env ConfigMap above, rendered as JSON
+#   (single source of truth — no duplication). Loaded by
+#   core/k8s/configmap.py:load_env_config().
+# - One JSON file per product, loaded by load_product_configs().
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcs.productConfigMapName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mcs.labels" . | nindent 4 }}
+data:
+  {{ .Values.envConfig.CONFIGMAP_ENV_CONFIG_FILE }}: |
+{{ .Values.envConfig | toJson | indent 4 }}
+  {{- range $filename, $content := .Values.productConfig.products }}
+  {{ $filename }}: |
+{{ $content | indent 4 }}
+  {{- end }}

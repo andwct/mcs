@@ -26,12 +26,13 @@ class Settings(BaseSettings):
 
     # ── ConfigMap ─────────────────────────────────────────────────────────
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
-    CONFIGMAP_ONE_PROPERTIES: str = "one.properties"
+    CONFIGMAP_ENV_CONFIG_FILE: str = "envConfig.json"
 
     # ── Storage ───────────────────────────────────────────────────────────
     STORAGE_PATH: str = "/mnt/models"
 
     # ── siteMC HTTP ───────────────────────────────────────────────────────
+    SITE_AUTHORIZATION_URL: str = ""
     SITE_ARTIFACT_SERVICE_URL: str = ""
     SITE_META_CACHE_SERVICE_URL: str = ""
 
@@ -41,6 +42,13 @@ class Settings(BaseSettings):
 
     # ── App ───────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
+    STAGE_NAME: str = "SIT"
+    APP_NAME: str = "mcs"
+
+    # ── Janitor ───────────────────────────────────────────────────────────
+    JANITOR_INTERVAL_SECONDS: int = 300
+    JANITOR_HIGH_WATERMARK: float = 0.90
+    JANITOR_LOW_WATERMARK: float = 0.75
 
 
 @lru_cache

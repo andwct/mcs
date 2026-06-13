@@ -9,10 +9,10 @@ class ProductConfig(BaseModel):
     MODEL_CENTER_ACCOUNT: str = ""
     MODEL_CENTER_PASSWORD: str = ""
     FUNCTION_LIST: list[str]
-    FUNC_NAME_MAPPING: dict[str, str]
+    FUNCTION_NAME_MAPPING: dict[str, str]
 
     def get_sanitized_name(self, func_id: str) -> str:
-        return self.FUNC_NAME_MAPPING[func_id]
+        return self.FUNCTION_NAME_MAPPING[func_id]
 
     def get_subject(self, func_id: str) -> str:
         return f"{func_id}-{self.get_sanitized_name(func_id)}"
