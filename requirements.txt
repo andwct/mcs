@@ -1,10 +1,16 @@
 # Web framework
-fastapi>=0.111.0
-uvicorn[standard]>=0.30.0
+fastapi>=0.103.2
+gunicorn==23.0.0
+uvicorn[standard]>=0.21.1
 
 # Data validation
-pydantic>=2.7.0
+pydantic>=2.0.0
 pydantic-settings>=2.3.0
+
+# HTTP client
+requests==2.31.0
+httpx>=0.24.0
+starlette>=0.27.0
 
 # NATS JetStream client
 nats-py>=2.7.0
@@ -13,11 +19,15 @@ nats-py>=2.7.0
 # Compatible with Bitnami Redis Sentinel chart 18.2.0 (Redis 7.2.4)
 redis[asyncio]>=5.0.0
 
-# HTTP client (artifact + meta cache service calls)
-httpx>=0.27.0
-
 # Kubernetes client (in-cluster config, downward API)
 kubernetes>=29.0.0
+kubernetes_asyncio==33.3.0
+
+# Crypto & security
+pycroptodomex==3.16
+cryptography==43.0.0
+blake3
 
 # Async support
+python-multipart=0.0.9
 anyio>=4.0.0
