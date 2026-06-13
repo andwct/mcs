@@ -146,19 +146,29 @@ NATS decentralized auth: a `.creds` file bundles a **user JWT** + **NKey
 seed**. Created via `nsc` (NATS account/user CLI), scoped to an existing
 **operator/account** for siteMC.
 
-**User naming:** each MCS deployment/site needs its own user — include a
-site/deployment identifier, e.g. `mcs-<site-name>-synchronizer`
-(`mcs-sit01-synchronizer`, `mcs-prod-tpe-synchronizer`, etc.) to avoid
-collisions across deployments sharing the same siteMC NATS.
+**User naming:** each MCS deployment/site needs its own user. Use the
+**StatefulSet name** (`fullnameOverride` in `values.yaml` — same value
+used to derive `metadata-sync-{statefulset_name}`) as the identifier, so
+NATS user naming stays consistent with consumer naming and is
+automatically unique per deployment:
+
+```
+mcs-{statefulset_name}-synchronizer
+```
+
+e.g. if `fullnameOverride: mcs-statefulset`, the user is
+`mcs-mcs-statefulset-synchronizer`. If `fullnameOverride` is already
+deployment-unique (which it must be, per Task "Consumer scope redesign"),
+this naming requires no additional site/environment identifier.
 
 ```bash
 # 1. Select the siteMC operator + account context (adjust names to your setup)
 nsc env -o <SITEMC_OPERATOR>
 nsc env -a <SITEMC_ACCOUNT>
 
-# 2. Create a dedicated user for this MCS deployment's synchronizer
-#    Replace <SITE> with a unique identifier for this deployment.
-nsc add user mcs-<SITE>-synchronizer \
+# 2. Create a dedicated user for this MCS deployment's synchronizer.
+#    <STATEFULSET_NAME> = .Values.fullnameOverride (e.g. mcs-statefulset)
+nsc add user mcs-<STATEFULSET_NAME>-synchronizer \
   --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-ARTIFACT' \
   --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-METADATA' \
   --allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-ARTIFACT.>' \
@@ -169,11 +179,11 @@ nsc add user mcs-<SITE>-synchronizer \
   --allow-pub '$JS.API.CONSUMER.INFO.MLOP-MCS-METADATA.>' \
   --allow-pub '$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-METADATA.>' \
   --allow-pub '$JS.API.CONSUMER.DELETE.MLOP-MCS-ARTIFACT.>' \
-  --allow-sub 'artifact-sync-*.deliver' \
+  --allow-sub 'artifact-sync-<STATEFULSET_NAME>-*.deliver' \
   --allow-sub '_INBOX.>'
 
 # 3. Generate the .creds file (JWT + NKey seed bundled together)
-nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-<SITE>-synchronizer > nats.creds
+nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-<STATEFULSET_NAME>-synchronizer > nats.creds
 
 # 4. Push contents into Vault at the path configured in values.yaml
 #    (vaultSecrets[0].path, e.g. kv-mlp/mlop-secret/mcs), key "nats.creds"
@@ -184,9 +194,12 @@ nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-<SITE>-synchronizer > nats.creds
   creating **durable** consumers; included alongside
   `$JS.API.CONSUMER.CREATE.<stream>.>` for compatibility across NATS
   server versions.
-- `artifact-sync-*.deliver` now covers exactly 3 deliver subjects per
-  deployment (`artifact-sync-{fullname}-0.deliver`, `-1-`, `-2-`) — one
-  per pod, regardless of how many `func_id`s are configured.
+- `artifact-sync-<STATEFULSET_NAME>-*.deliver` covers exactly 3 deliver
+  subjects for this deployment (`artifact-sync-{fullname}-0.deliver`,
+  `-1-`, `-2-`) — one per pod, regardless of how many `func_id`s are
+  configured. Scoping the wildcard to `<STATEFULSET_NAME>` (rather than a
+  bare `artifact-sync-*`) also prevents this user from subscribing to
+  another deployment's deliver subjects.
 - `$JS.API.CONSUMER.DELETE...` included so a future re-deploy with changed
   consumer config (e.g. different `ack_wait` or `filter_subjects`) can
   clean up and recreate — not currently used by the synchronizer but
