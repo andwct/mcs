@@ -29,21 +29,23 @@ the `*.json` fix. Fixed: all three now read `apps.<name>.main:app`.
 
 ## 2. Artifact Stream — Push Consumer (Broadcast), one per pod
 
-**Status:** ✅ Already implemented (PR #1), reviewed and confirmed correct:
+**Status:** ✅ Redesigned on this branch (see "Consumer scope redesign"
+below).
 
-- `ensure_artifact_consumer()` creates durable
-  `artifact-sync-{pod_name}-{func_id}` with a **unique `deliver_subject`**
-  (`artifact-sync-{pod_name}-{func_id}.deliver`), `filter_subject =
-  {func_id}-{sanitized_name}`, `deliver_policy=NEW`, `ack_policy=EXPLICIT`,
-  `ack_wait=300s`
-- `lifespan.py` step 6 calls this for every `(func_id)` on every pod, then
-  subscribes to that pod's own deliver subject with
-  `handle_artifact_message`
+- `ensure_artifact_consumer()` creates **ONE** durable per pod:
+  `artifact-sync-{pod_name}` (e.g. `artifact-sync-mcs-statefulset-0`),
+  with `filter_subjects` = **all** `{func_id}-{sanitized_name}` subjects
+  configured across every product in `/etc/config`
+- Unique `deliver_subject` per pod: `artifact-sync-{pod_name}.deliver`
+- `deliver_policy=NEW`, `ack_policy=EXPLICIT`, `ack_wait=300s`
+- `lifespan.py` step 6 calls this once per pod startup, then subscribes
+  to that pod's own deliver subject with `handle_artifact_message`
 - Each pod independently fetches new model/kernel artifact versions into
-  its own PVC when it receives a `model-update` style event
+  its own PVC for ANY configured `func_id` when it receives a
+  `model-update` style event
 
 **Idempotency / error handling (this branch):** `ensure_artifact_consumer`
-now distinguishes:
+distinguishes:
 - "consumer already exists" — detected via JetStream API error code
   `10013` (`JSConsumerNameExistErr`, the documented nats-server code for
   "consumer name already in use"), with a fallback check on `description`
@@ -57,26 +59,67 @@ now distinguishes:
 
 ## 3. Metadata Stream — Pull Consumer (Queue Group), shared across pods
 
-**Status:** ✅ Already implemented (PR #1), reviewed and confirmed correct:
+**Status:** ✅ Redesigned on this branch (see "Consumer scope redesign"
+below).
 
-- `ensure_metadata_consumer()` creates **one durable per `func_id`**
-  (`metadata-sync-{func_id}-{sanitized_name}`), `filter_subject =
-  {func_id}-{sanitized_name}`, `deliver_policy=NEW`, `ack_policy=EXPLICIT`,
-  `ack_wait=30s`, `replay_policy=INSTANT`
+- `ensure_metadata_consumer()` creates **ONE** durable for the entire
+  deployment: `metadata-sync-{statefulset_name}` (e.g.
+  `metadata-sync-mcs-statefulset` — no ordinal, shared identically by all
+  3 pods), with `filter_subjects` = **all** `{func_id}-{sanitized_name}`
+  subjects configured across every product in `/etc/config`
+- `deliver_policy=NEW`, `ack_policy=EXPLICIT`, `ack_wait=30s`,
+  `replay_policy=INSTANT`
 - All 3 pods call `add_consumer()` with the **same name + config** on
   startup — first pod creates it, the other two get "already exists" and
-  reuse it (now logged distinctly, see Task 2 error handling section,
-  same logic applies here)
-- `fetch_loop.py` runs one `asyncio.Task` per `func_id`, each pod's task
-  calls `consumer.fetch(batch=1, timeout=5.0)` on the **same shared
-  durable consumer** — NATS delivers each message to exactly one fetching
-  pod, giving queue-group semantics for pull consumers
+  reuse it (same error-handling as Task 2)
+- `fetch_loop.py` runs a **single** `asyncio.Task` per pod, fetching from
+  this one shared durable consumer — NATS delivers each message (for any
+  configured `func_id`) to exactly one fetching pod, giving queue-group
+  semantics across the whole deployment
 - On success: `handle_metadata_message` updates `model_list` in Redis,
   then `msg.ack()`
 - On failure: `msg.nak()` -> NATS redelivers to whichever pod fetches next
   after `ack_wait` (30s)
 
-**No code changes needed** beyond the shared error-handling fix in Task 2.
+---
+
+## Consumer scope redesign (this branch)
+
+**Previous design (PR #1):** one consumer **per `(pod, func_id)`** for
+artifacts, one consumer **per `func_id`** for metadata — i.e. N consumers
+where N = number of configured functions.
+
+**New design (this branch):** `func_id` moves entirely into
+**`filter_subjects`** (a list), and consumer identity is scoped to
+**deployment**, not function:
+
+| Consumer | Scope | Name | filter_subjects |
+|---|---|---|---|
+| Artifact (push) | Per pod | `artifact-sync-{pod_name}` | all configured `{func_id}-{sanitized_name}` subjects |
+| Metadata (pull) | Per deployment (shared) | `metadata-sync-{statefulset_name}` | all configured `{func_id}-{sanitized_name}` subjects |
+
+**Why:**
+- Adding/removing a `func_id` from `productConfig` no longer requires
+  creating/deleting NATS consumers — just update `filter_subjects` (a
+  config-only change)
+- Consumer **names** are now stable across config changes and naturally
+  unique across deployments as long as `fullnameOverride` is unique
+  (artifact consumer includes pod ordinal; metadata consumer is the
+  StatefulSet name without ordinal, identical across this deployment's 3
+  pods — required for queue-group `fetch()` to work)
+- `core/k8s/pod.py` gained `get_statefulset_name()`: strips the trailing
+  `-<ordinal>` from `HOSTNAME` (falls back to full pod name with a warning
+  if it doesn't match `<name>-<digits>`)
+
+**Verified:**
+```
+pod=mcs-statefulset-0  artifact_consumer=artifact-sync-mcs-statefulset-0   metadata_consumer=metadata-sync-mcs-statefulset
+pod=mcs-statefulset-1  artifact_consumer=artifact-sync-mcs-statefulset-1   metadata_consumer=metadata-sync-mcs-statefulset
+pod=mcs-statefulset-2  artifact_consumer=artifact-sync-mcs-statefulset-2   metadata_consumer=metadata-sync-mcs-statefulset
+```
+3 distinct artifact consumers (broadcast), 1 shared metadata consumer
+(queue group) — confirmed with a 2-function product config, both subjects
+correctly appear in both consumers' `filter_subjects`.
 
 ---
 
@@ -90,8 +133,8 @@ user needs permission to:
 - **query consumer/stream info** (`$JS.API.CONSUMER.INFO...`,
   `$JS.API.STREAM.INFO...`) — used by `find_stream`/`verify_stream` and
   `add_consumer`'s idempotency check
-- **subscribe** to its own artifact deliver subjects (broadcast push)
-- **pull** from metadata consumers (`$JS.API.CONSUMER.MSG.NEXT...`)
+- **subscribe** to its own artifact deliver subject (broadcast push)
+- **pull** from the shared metadata consumer (`$JS.API.CONSUMER.MSG.NEXT...`)
 - **subscribe** to `_INBOX.>` — NATS request-reply pattern used
   internally by all JetStream API calls
 
@@ -103,13 +146,19 @@ NATS decentralized auth: a `.creds` file bundles a **user JWT** + **NKey
 seed**. Created via `nsc` (NATS account/user CLI), scoped to an existing
 **operator/account** for siteMC.
 
+**User naming:** each MCS deployment/site needs its own user — include a
+site/deployment identifier, e.g. `mcs-<site-name>-synchronizer`
+(`mcs-sit01-synchronizer`, `mcs-prod-tpe-synchronizer`, etc.) to avoid
+collisions across deployments sharing the same siteMC NATS.
+
 ```bash
 # 1. Select the siteMC operator + account context (adjust names to your setup)
 nsc env -o <SITEMC_OPERATOR>
 nsc env -a <SITEMC_ACCOUNT>
 
-# 2. Create a dedicated user for MCS's synchronizer
-nsc add user mcs-synchronizer \
+# 2. Create a dedicated user for this MCS deployment's synchronizer
+#    Replace <SITE> with a unique identifier for this deployment.
+nsc add user mcs-<SITE>-synchronizer \
   --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-ARTIFACT' \
   --allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-METADATA' \
   --allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-ARTIFACT.>' \
@@ -124,7 +173,7 @@ nsc add user mcs-synchronizer \
   --allow-sub '_INBOX.>'
 
 # 3. Generate the .creds file (JWT + NKey seed bundled together)
-nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-synchronizer > nats.creds
+nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-<SITE>-synchronizer > nats.creds
 
 # 4. Push contents into Vault at the path configured in values.yaml
 #    (vaultSecrets[0].path, e.g. kv-mlp/mlop-secret/mcs), key "nats.creds"
@@ -135,12 +184,16 @@ nsc generate creds -a <SITEMC_ACCOUNT> -n mcs-synchronizer > nats.creds
   creating **durable** consumers; included alongside
   `$JS.API.CONSUMER.CREATE.<stream>.>` for compatibility across NATS
   server versions.
-- `artifact-sync-*.deliver` covers all 3 pods' deliver subjects
-  (`artifact-sync-mcs-statefulset-0-<func_id>.deliver`, `-1-`, `-2-`)
-  since they all share the `artifact-sync-*` prefix and `.deliver` suffix.
+- `artifact-sync-*.deliver` now covers exactly 3 deliver subjects per
+  deployment (`artifact-sync-{fullname}-0.deliver`, `-1-`, `-2-`) — one
+  per pod, regardless of how many `func_id`s are configured.
 - `$JS.API.CONSUMER.DELETE...` included so a future re-deploy with changed
-  consumer config (e.g. different `ack_wait`) can clean up and recreate —
-  not currently used by the synchronizer but harmless to include now.
+  consumer config (e.g. different `ack_wait` or `filter_subjects`) can
+  clean up and recreate — not currently used by the synchronizer but
+  harmless to include now. Note: changing `filter_subjects` on an existing
+  durable consumer may require delete+recreate depending on server
+  version, since `add_consumer` with a changed config for an existing
+  name returns "already exists" rather than updating it in place.
 - If `nsc` reports the account/operator already exists with a different
   CLI workflow (e.g. memory-resolver vs full-resolver setup), the
   `--allow-pub`/`--allow-sub` flags and `generate creds` command are the

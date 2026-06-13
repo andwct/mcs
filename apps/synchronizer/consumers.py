@@ -24,27 +24,44 @@ def _is_already_exists_error(e: APIError) -> bool:
     return False
 
 
-def artifact_consumer_name(pod_name: str, func_id: str) -> str:
-    return f"artifact-sync-{pod_name}-{func_id}"
+def artifact_consumer_name(pod_name: str) -> str:
+    """
+    One push consumer PER POD, listening across all func_id subjects
+    configured for this deployment (via filter_subjects). pod_name
+    includes the StatefulSet name + ordinal (e.g. "mcs-statefulset-0"),
+    so this is automatically unique across deployments as long as each
+    deployment uses a unique fullnameOverride.
+    """
+    return f"artifact-sync-{pod_name}"
 
 
-def artifact_deliver_subject(pod_name: str, func_id: str) -> str:
-    return f"artifact-sync-{pod_name}-{func_id}.deliver"
+def artifact_deliver_subject(pod_name: str) -> str:
+    return f"artifact-sync-{pod_name}.deliver"
 
 
-def metadata_consumer_name(func_id: str, sanitized_name: str) -> str:
-    return f"metadata-sync-{func_id}-{sanitized_name}"
+def metadata_consumer_name(statefulset_name: str) -> str:
+    """
+    One pull consumer SHARED across all pods of this deployment, listening
+    across all func_id subjects configured for this deployment (via
+    filter_subjects). statefulset_name (no ordinal) makes this unique
+    across deployments sharing the same MLOP-MCS-METADATA stream, while
+    remaining identical across this deployment's 3 pods (required for
+    queue-group semantics via fetch()).
+    """
+    return f"metadata-sync-{statefulset_name}"
 
 
 async def ensure_artifact_consumer(
     js: JetStreamContext,
     pod_name: str,
-    func_id: str,
-    subject: str,
+    subjects: list[str],
 ) -> None:
     """
     Create push consumer for artifact broadcast.
-    Each (pod, func_id) pair gets its own consumer + unique deliver_subject.
+
+    One consumer per pod, filter_subjects = all func_id subjects configured
+    for this deployment (from productConfig). Every pod creates its own
+    consumer with its own unique deliver_subject — broadcast fan-out.
 
     Idempotent: if the consumer already exists (same or different config),
     logs and continues — NATS durable consumers persist across pod restarts
@@ -52,21 +69,24 @@ async def ensure_artifact_consumer(
     denied, stream not found, etc.) is a real failure and is re-raised as
     RuntimeError so the pod restarts per the no-silent-failures policy.
     """
-    name = artifact_consumer_name(pod_name, func_id)
-    deliver_subj = artifact_deliver_subject(pod_name, func_id)
+    name = artifact_consumer_name(pod_name)
+    deliver_subj = artifact_deliver_subject(pod_name)
     try:
         await js.add_consumer(
             settings.NATS_ARTIFACT_STREAM,
             ConsumerConfig(
                 durable_name=name,
-                filter_subject=subject,
+                filter_subjects=subjects,
                 deliver_subject=deliver_subj,
                 deliver_policy=DeliverPolicy.NEW,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=settings.NATS_ACK_WAIT_ARTIFACT_SECONDS,
             ),
         )
-        logger.info(f"Artifact push consumer created: {name} -> {deliver_subj}")
+        logger.info(
+            f"Artifact push consumer created: {name} -> {deliver_subj} "
+            f"(subjects={subjects})"
+        )
     except APIError as e:
         if _is_already_exists_error(e):
             logger.info(
@@ -90,35 +110,37 @@ async def ensure_artifact_consumer(
 
 async def ensure_metadata_consumer(
     js: JetStreamContext,
-    func_id: str,
-    sanitized_name: str,
-    subject: str,
+    statefulset_name: str,
+    subjects: list[str],
 ) -> None:
     """
     Create pull consumer for metadata queue group.
-    One consumer per func_id, shared across all pods — every pod calls
-    add_consumer() with the SAME durable name + config on startup; only
-    the first pod actually creates it, the other two get
-    "consumer already exists" and reuse it. All 3 pods then fetch() from
-    this single durable consumer, giving queue-group semantics.
+
+    ONE consumer shared across all pods of this deployment, filter_subjects
+    = all func_id subjects configured for this deployment (from
+    productConfig). Every pod calls add_consumer() with the SAME durable
+    name + config on startup; only the first pod actually creates it, the
+    other two get "consumer already exists" and reuse it. All 3 pods then
+    fetch() from this single durable consumer, giving queue-group
+    semantics across the whole deployment for every configured func_id.
 
     Any error other than "already exists" is a real failure and is
     re-raised as RuntimeError so the pod restarts.
     """
-    name = metadata_consumer_name(func_id, sanitized_name)
+    name = metadata_consumer_name(statefulset_name)
     try:
         await js.add_consumer(
             settings.NATS_METADATA_STREAM,
             ConsumerConfig(
                 durable_name=name,
-                filter_subject=subject,
+                filter_subjects=subjects,
                 deliver_policy=DeliverPolicy.NEW,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=settings.NATS_ACK_WAIT_METADATA_SECONDS,
                 replay_policy=ReplayPolicy.INSTANT,
             ),
         )
-        logger.info(f"Metadata pull consumer created: {name}")
+        logger.info(f"Metadata pull consumer created: {name} (subjects={subjects})")
     except APIError as e:
         if _is_already_exists_error(e):
             logger.info(

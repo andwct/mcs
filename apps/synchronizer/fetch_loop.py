@@ -8,48 +8,40 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Task registry — cleared on shutdown to prevent accumulation across restarts
-_fetch_tasks: list[asyncio.Task] = []
+# Single fetch loop task for this deployment's shared metadata pull consumer.
+# Cleared on shutdown to prevent accumulation across restarts.
+_fetch_task: asyncio.Task | None = None
 
 
-async def start_fetch_loops(
-    js: JetStreamContext,
-    func_subjects: list[tuple[str, str, str, str]],  # (product_id, func_id, sanitized_name, subject)
-) -> None:
+async def start_fetch_loop(js: JetStreamContext, statefulset_name: str) -> None:
     """
-    Launch one asyncio.Task per func_id to long-poll the metadata pull consumer.
-    sanitized_name comes directly from ProductConfig.FUNC_NAME_MAPPING — not derived
-    from splitting the subject string.
+    Launch the single asyncio.Task that long-polls this deployment's shared
+    metadata pull consumer (filter_subjects covers all configured func_ids).
     """
-    # Clear any stale tasks from a previous lifespan (safety guard)
-    _fetch_tasks.clear()
-
-    for product_id, func_id, sanitized_name, subject in func_subjects:
-        consumer_name = metadata_consumer_name(func_id, sanitized_name)
-        task = asyncio.create_task(
-            _fetch_loop(js, consumer_name, func_id),
-            name=f"fetch-loop-{func_id}",
-        )
-        _fetch_tasks.append(task)
-        logger.info(f"Fetch loop started: func_id={func_id} consumer={consumer_name}")
+    global _fetch_task
+    consumer_name = metadata_consumer_name(statefulset_name)
+    _fetch_task = asyncio.create_task(
+        _fetch_loop(js, consumer_name),
+        name=f"fetch-loop-{consumer_name}",
+    )
+    logger.info(f"Fetch loop started: consumer={consumer_name}")
 
 
-async def _fetch_loop(
-    js: JetStreamContext,
-    consumer_name: str,
-    func_id: str,
-) -> None:
+async def _fetch_loop(js: JetStreamContext, consumer_name: str) -> None:
     """
-    Continuously fetch from a metadata pull consumer.
+    Continuously fetch from the shared metadata pull consumer.
 
     Uses server-side long-polling: consumer.fetch(batch=1, timeout=5.0) blocks
     up to 5 seconds server-side waiting for a message before returning empty.
     The coroutine simply awaits — no busy spin, event loop stays free for
     artifact push callbacks and other tasks.
 
-    On nak() or ack wait timeout, NATS redelivers to whichever pod fetches next.
+    All 3 pods of this deployment run this same loop against the same
+    durable consumer name — NATS delivers each message to exactly one
+    fetching pod (queue-group semantics for pull consumers). On nak() or
+    ack wait timeout, NATS redelivers to whichever pod fetches next.
     """
-    logger.info(f"Fetch loop running: consumer={consumer_name} func_id={func_id}")
+    logger.info(f"Fetch loop running: consumer={consumer_name}")
 
     # Bind to the pre-created durable pull consumer
     consumer = await js.consumer(
@@ -74,9 +66,10 @@ async def _fetch_loop(
             await asyncio.sleep(2)
 
 
-async def cancel_fetch_loops() -> None:
-    for task in _fetch_tasks:
-        task.cancel()
-    await asyncio.gather(*_fetch_tasks, return_exceptions=True)
-    _fetch_tasks.clear()
-    logger.info("All fetch loops cancelled")
+async def cancel_fetch_loop() -> None:
+    global _fetch_task
+    if _fetch_task:
+        _fetch_task.cancel()
+        await asyncio.gather(_fetch_task, return_exceptions=True)
+        _fetch_task = None
+    logger.info("Fetch loop cancelled")

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from core.nats.client import connect as nats_connect, close as nats_close, verify_stream
 from core.redis.client import connect as redis_connect, close as redis_close
-from core.k8s.pod import get_pod_name
+from core.k8s.pod import get_pod_name, get_statefulset_name
 from core.k8s.configmap import load_product_configs, get_all_function_subjects
 from core.config.settings import get_settings
 from apps.synchronizer.consumers import (
@@ -12,7 +12,7 @@ from apps.synchronizer.consumers import (
     artifact_deliver_subject,
 )
 from apps.synchronizer.handlers import handle_artifact_message
-from apps.synchronizer.fetch_loop import start_fetch_loops, cancel_fetch_loops
+from apps.synchronizer.fetch_loop import start_fetch_loop, cancel_fetch_loop
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -31,10 +31,12 @@ async def lifespan(app: FastAPI):
 
     # 1. Load ConfigMap — raises FileNotFoundError → pod restarts
     products = load_product_configs()
-    # Now returns (product_id, func_id, sanitized_name, subject)
-    # sanitized_name sourced directly from FUNC_NAME_MAPPING, never from subject string
+    # (product_id, func_id, sanitized_name, subject) per configured function.
+    # sanitized_name sourced directly from FUNCTION_NAME_MAPPING, never from
+    # splitting the subject string.
     func_subjects = get_all_function_subjects(products)
-    logger.info(f"Loaded {len(products)} products, {len(func_subjects)} function subjects")
+    subjects = [s for (_, _, _, s) in func_subjects]
+    logger.info(f"Loaded {len(products)} products, {len(subjects)} subjects: {subjects}")
 
     # 2. Connect NATS
     nc, js = await nats_connect()
@@ -46,24 +48,27 @@ async def lifespan(app: FastAPI):
     # 4. Connect Redis Sentinel — RuntimeError on ping fail → pod restarts
     await redis_connect()
 
-    # 5. Resolve pod name from HOSTNAME env var (K8s downward API)
+    # 5. Resolve pod name + StatefulSet name from HOSTNAME env var (K8s downward API)
     pod_name = get_pod_name()
-    logger.info(f"Running as pod: {pod_name}")
+    statefulset_name = get_statefulset_name()
+    logger.info(f"Running as pod: {pod_name} (StatefulSet: {statefulset_name})")
 
-    # 6. Per func_id: create consumers + subscribe to artifact deliver subject
-    for product_id, func_id, sanitized_name, subject in func_subjects:
+    # 6. Artifact push consumer — ONE per pod, listening across ALL configured
+    #    subjects (filter_subjects). Broadcast fan-out: every pod creates its
+    #    own consumer + deliver_subject.
+    await ensure_artifact_consumer(js, pod_name, subjects)
+    deliver_subj = artifact_deliver_subject(pod_name)
+    await nc.subscribe(deliver_subj, cb=handle_artifact_message)
+    logger.info(f"Subscribed to artifact deliver: {deliver_subj}")
 
-        # Artifact push consumer — unique per (pod, func_id), broadcast fan-out
-        await ensure_artifact_consumer(js, pod_name, func_id, subject)
-        deliver_subj = artifact_deliver_subject(pod_name, func_id)
-        await nc.subscribe(deliver_subj, cb=handle_artifact_message)
-        logger.info(f"Subscribed to artifact deliver: {deliver_subj}")
+    # 7. Metadata pull consumer — ONE shared across all 3 pods of this
+    #    deployment, listening across ALL configured subjects
+    #    (filter_subjects). Queue-group semantics via fetch().
+    await ensure_metadata_consumer(js, statefulset_name, subjects)
 
-        # Metadata pull consumer — shared durable, queue group semantics via fetch()
-        await ensure_metadata_consumer(js, func_id, sanitized_name, subject)
-
-    # 7. Start one fetch loop asyncio.Task per func_id for metadata pull consumer
-    await start_fetch_loops(js, func_subjects)
+    # 8. Start the metadata fetch loop (single asyncio.Task for this deployment's
+    #    shared consumer)
+    await start_fetch_loop(js, statefulset_name)
 
     _ready = True
     logger.info("Synchronizer ready")
@@ -73,6 +78,6 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Synchronizer shutting down")
     _ready = False
-    await cancel_fetch_loops()
+    await cancel_fetch_loop()
     await nats_close()
     await redis_close()
