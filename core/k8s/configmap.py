@@ -7,41 +7,49 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Filename of the general env config file mounted at CONFIGMAP_MOUNT_PATH.
+# All other *.json files in the same directory are treated as product configs.
+_ENV_CONFIG_FILENAME = "one.properties"
 
-def load_env_config() -> dict[str, str]:
+
+def load_one_properties() -> dict[str, str]:
     """
-    Load envConfig.json from ConfigMap mount path.
-
-    This is a flat { "KEY": "value" } JSON object — the same data used to
-    populate the env-config ConfigMap (envFrom -> settings.py). It is also
-    mounted as a file so non-env-var consumers (if any) can read it directly.
+    Parse one.properties (key=value format) from ConfigMap mount path.
+    Returns a flat dict of all properties.
     """
-    path = Path(settings.CONFIGMAP_MOUNT_PATH) / settings.CONFIGMAP_ENV_CONFIG_FILE
-    if not path.exists():
-        raise FileNotFoundError(f"{settings.CONFIGMAP_ENV_CONFIG_FILE} not found at {path}")
+    props_path = Path(settings.CONFIGMAP_MOUNT_PATH) / _ENV_CONFIG_FILENAME
+    if not props_path.exists():
+        raise FileNotFoundError(
+            f"{_ENV_CONFIG_FILENAME} not found at {props_path}"
+        )
 
-    config = json.loads(path.read_text())
-    logger.info(f"Loaded {settings.CONFIGMAP_ENV_CONFIG_FILE}: {list(config.keys())}")
-    return config
+    props: dict[str, str] = {}
+    for line in props_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        props[key.strip()] = value.strip()
+
+    logger.info(f"Loaded {_ENV_CONFIG_FILENAME}: {list(props.keys())}")
+    return props
 
 
 def load_product_configs() -> list[ProductConfig]:
     """
     Scan ConfigMap mount for product JSON files and return ProductConfig list.
 
-    Product files are named "{ProductName}.json" (e.g. "ABC.json"). All
-    *.json files in the mount path are treated as product configs, EXCEPT
-    CONFIGMAP_ENV_CONFIG_FILE (envConfig.json), which holds flat env vars
-    and is loaded separately via load_env_config().
+    Product files are named "{ProductName}.json" (e.g. "ABC.json").
+    one.properties is excluded since it is not JSON.
+    All *.json files are treated as product configs.
     """
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
-    product_files = sorted(
-        f for f in mount.glob("*.json")
-        if f.name != settings.CONFIGMAP_ENV_CONFIG_FILE
-    )
+    product_files = sorted(mount.glob("*.json"))
 
     if not product_files:
-        raise FileNotFoundError(f"No product *.json files found in {mount}")
+        raise FileNotFoundError(
+            f"No product *.json files found in {mount}"
+        )
 
     products: list[ProductConfig] = []
     for f in product_files:

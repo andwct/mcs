@@ -26,7 +26,6 @@ class Settings(BaseSettings):
 
     # ── ConfigMap ─────────────────────────────────────────────────────────
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
-    CONFIGMAP_ENV_CONFIG_FILE: str = "envConfig.json"
 
     # ── Storage ───────────────────────────────────────────────────────────
     STORAGE_PATH: str = "/mnt/models"
