@@ -5,7 +5,6 @@ from nats.js import JetStreamContext
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 _nc: NATS | None = None
 _js: JetStreamContext | None = None
@@ -16,6 +15,7 @@ async def connect() -> tuple[NATS, JetStreamContext]:
     if _nc and _nc.is_connected:
         return _nc, _js
 
+    settings = get_settings()
     logger.info(f"Connecting to NATS at {settings.NATS_URL}")
     _nc = await nats.connect(
         servers=settings.NATS_URL,

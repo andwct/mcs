@@ -5,18 +5,13 @@ from core.models.product import ProductConfig
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-# Filename of the general env config file mounted at CONFIGMAP_MOUNT_PATH.
-# All other *.json files in the same directory are treated as product configs.
 _ENV_CONFIG_FILENAME = "one.properties"
 
 
 def load_one_properties() -> dict[str, str]:
-    """
-    Parse one.properties (key=value format) from ConfigMap mount path.
-    Returns a flat dict of all properties.
-    """
+    """Parse one.properties (key=value) from ConfigMap mount path."""
+    settings = get_settings()
     props_path = Path(settings.CONFIGMAP_MOUNT_PATH) / _ENV_CONFIG_FILENAME
     if not props_path.exists():
         raise FileNotFoundError(
@@ -38,11 +33,10 @@ def load_one_properties() -> dict[str, str]:
 def load_product_configs() -> list[ProductConfig]:
     """
     Scan ConfigMap mount for product JSON files and return ProductConfig list.
-
-    Product files are named "{ProductName}.json" (e.g. "ABC.json").
-    one.properties is excluded since it is not JSON.
-    All *.json files are treated as product configs.
+    All *.json files are treated as product configs (one.properties is not JSON
+    so it is naturally excluded).
     """
+    settings = get_settings()
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
     product_files = sorted(mount.glob("*.json"))
 
@@ -73,10 +67,7 @@ def get_all_function_subjects(
 ) -> list[tuple[str, str, str, str]]:
     """
     Return flat list of (product_id, func_id, sanitized_name, subject).
-
-    sanitized_name comes directly from FUNCTION_NAME_MAPPING in
-    {ProductName}.json — never derived by splitting the subject string.
-
+    sanitized_name from FUNCTION_NAME_MAPPING — never split from subject string.
     subject = "{func_id}-{sanitized_name}"
     """
     result = []
