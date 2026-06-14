@@ -19,7 +19,7 @@ async def connect() -> tuple[NATS, JetStreamContext]:
     logger.info(f"Connecting to NATS at {settings.NATS_URL}")
     _nc = await nats.connect(
         servers=settings.NATS_URL,
-        credentials=settings.NATS_CREDS_FILE,
+        user_credentials=settings.NATS_CREDS_FILE,
         reconnect_time_wait=2,
         max_reconnect_attempts=-1,
         error_cb=_on_error,
