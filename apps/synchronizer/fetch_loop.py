@@ -43,15 +43,18 @@ async def _fetch_loop(js: JetStreamContext, consumer_name: str) -> None:
     """
     logger.info(f"Fetch loop running: consumer={consumer_name}")
 
-    # Bind to the pre-created durable pull consumer
-    consumer = await js.consumer(
-        settings.NATS_METADATA_STREAM,  # configurable — never hardcoded
-        consumer_name,
+    # Bind to the pre-created durable pull consumer.
+    # pull_subscribe_bind() attaches to an EXISTING durable consumer by name
+    # without trying to create a new one — consumer must already exist
+    # (created by ensure_metadata_consumer() in lifespan.py step 7).
+    psub = await js.pull_subscribe_bind(
+        consumer=consumer_name,
+        stream=settings.NATS_METADATA_STREAM,
     )
 
     while True:
         try:
-            msgs = await consumer.fetch(batch=1, timeout=5.0)
+            msgs = await psub.fetch(batch=1, timeout=5.0)
             for msg in msgs:
                 try:
                     await handle_metadata_message(msg)

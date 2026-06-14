@@ -9,7 +9,7 @@ from core.config.settings import get_settings
 from apps.synchronizer.consumers import (
     ensure_artifact_consumer,
     ensure_metadata_consumer,
-    artifact_deliver_subject,
+    artifact_consumer_name,
 )
 from apps.synchronizer.handlers import handle_artifact_message
 from apps.synchronizer.fetch_loop import start_fetch_loop, cancel_fetch_loop
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Loaded {len(products)} products, {len(subjects)} subjects: {subjects}")
 
     # 2. Connect NATS
-    nc, js = await nats_connect()
+    _, js = await nats_connect()
 
     # 3. Verify streams — RuntimeError → pod restarts
     await verify_stream(js, settings.NATS_ARTIFACT_STREAM)
@@ -57,9 +57,25 @@ async def lifespan(app: FastAPI):
     #    subjects (filter_subjects). Broadcast fan-out: every pod creates its
     #    own consumer + deliver_subject.
     await ensure_artifact_consumer(js, pod_name, subjects)
-    deliver_subj = artifact_deliver_subject(pod_name)
-    await nc.subscribe(deliver_subj, cb=handle_artifact_message)
-    logger.info(f"Subscribed to artifact deliver: {deliver_subj}")
+
+    # Bind to the push consumer using subscribe_bind() — this correctly
+    # attaches to the JetStream consumer so msg.ack()/msg.nak() work.
+    # manual_ack=True because handle_artifact_message calls msg.ack()/msg.nak()
+    # itself — without this, subscribe_bind wraps cb with auto-ack which would
+    # double-ack and prevent manual nak on failure.
+    consumer_name = artifact_consumer_name(pod_name)
+    consumer_info = await js.consumer_info(
+        settings.NATS_ARTIFACT_STREAM,
+        consumer_name,
+    )
+    await js.subscribe_bind(
+        stream=settings.NATS_ARTIFACT_STREAM,
+        config=consumer_info.config,
+        consumer=consumer_name,
+        cb=handle_artifact_message,
+        manual_ack=True,
+    )
+    logger.info(f"Subscribed to artifact push consumer: {consumer_name}")
 
     # 7. Metadata pull consumer — ONE shared across all 3 pods of this
     #    deployment, listening across ALL configured subjects

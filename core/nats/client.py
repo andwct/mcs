@@ -43,7 +43,7 @@ async def close() -> None:
 async def verify_stream(js: JetStreamContext, stream_name: str) -> None:
     """Verify stream exists — raises RuntimeError if not found."""
     try:
-        await js.find_stream(stream_name)
+        await js.stream_info(stream_name)
         logger.info(f"Stream verified: {stream_name}")
     except Exception as e:
         raise RuntimeError(f"Required NATS stream '{stream_name}' not found: {e}")
