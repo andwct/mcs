@@ -46,9 +46,9 @@ nsc add user "${USER_NAME}" \
   --allow-pub "\$JS.API.CONSUMER.DURABLE.CREATE.${METADATA_STREAM}.>" \
   --allow-pub "\$JS.API.CONSUMER.INFO.${ARTIFACT_STREAM}.>" \
   --allow-pub "\$JS.API.CONSUMER.INFO.${METADATA_STREAM}.>" \
+  --allow-pub "\$JS.API.CONSUMER.MSG.NEXT.${ARTIFACT_STREAM}.>" \
   --allow-pub "\$JS.API.CONSUMER.MSG.NEXT.${METADATA_STREAM}.>" \
   --allow-pub "\$JS.API.CONSUMER.DELETE.${ARTIFACT_STREAM}.>" \
-  --allow-sub "artifact-sync-${STATEFULSET_NAME}-*.deliver" \
   --allow-sub '_INBOX.>'
 
 echo "== Generating ${OUTPUT_CREDS} =="
