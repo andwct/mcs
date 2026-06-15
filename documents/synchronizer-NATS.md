@@ -1,281 +1,199 @@
-# Synchronizer NATS — Task List
+# Synchronizer NATS — Design & Task Tracker
 
 > Branch: `feature/synchronizer-NATS`
-> Status: In progress
-> Goal: get synchronizer running in SIT, connecting to siteMC NATS, and
-> automatically creating consumers + subjects for all configured functions.
+> Latest tag: `v0.3.7-synchronizer-nats`
+> Status: ✅ Connected to siteMC NATS in SIT, consumers created, fetch loops running
+> Goal: synchronizer connects to siteMC NATS, creates durable consumers for
+> artifact broadcast and metadata queue-group, processes messages to update
+> Redis and fetch model artifacts.
 
 ---
 
-## 1. `FileNotFoundError: No product_*.json files found in /etc/config`
+## Final Design (v0.3.7)
 
-**Status:** ✅ Code-side fixed on `main` (PR #1, #2). One more bug found and
-fixed on this branch:
+### Consumer Pattern — Pull for Both Streams
 
-**Second blocker found:** `values.yaml`'s `appModule` values were
-`app.mcs.main:app` / `app.synchronizer.main:app` / `app.janitor.main:app`
-(singular `app`), but the actual package is `apps/` (plural). This would
-cause `ModuleNotFoundError: No module named 'app'` from uvicorn even after
-the `*.json` fix. Fixed: all three now read `apps.<name>.main:app`.
+Both `MLOP-MCS-ARTIFACT` and `MLOP-MCS-METADATA` use **pull consumers with
+fetch loops**. Push consumers were considered and rejected in favour of pull
+for consistency, backpressure, and simpler reconnect logic.
 
-**Action needed:**
-- [ ] Rebuild image from latest `main` (includes `*.json` glob fix +
-      `appModule` fix from this branch once merged)
-- [ ] Redeploy and confirm synchronizer pod passes
-      `load_product_configs()` and `uvicorn` boots without
-      `ModuleNotFoundError`
+| | Artifact | Metadata |
+|---|---|---|
+| **Stream** | `MLOP-MCS-ARTIFACT` | `MLOP-MCS-METADATA` |
+| **Consumer type** | Pull | Pull |
+| **Scope** | Per (pod, func_id) | Per (statefulset, func_id) |
+| **Consumer name** | `artifact-sync-{pod_name}-{func_id}` | `metadata-sync-{statefulset_name}-{func_id}` |
+| **filter_subject** | `{func_id}-{sanitized_name}` | `{func_id}-{sanitized_name}` |
+| **Semantics** | Broadcast — own consumer per pod | Queue-group — shared consumer across 3 pods |
+| **Fetch loop** | One `asyncio.Task` per func_id | One `asyncio.Task` per func_id |
+| **Handler** | `handle_artifact_message()` | `handle_metadata_message()` |
 
----
+### Why Pull for Both
 
-## 2. Artifact Stream — Push Consumer (Broadcast), one per pod
+- **Consistent codebase** — one pattern instead of push+pull mix
+- **Backpressure** — pod fetches only when ready; push can overwhelm during
+  large model file downloads
+- **Simpler reconnect** — `pull_subscribe_bind()` only, no subscription state
+- **Already proven** — fetch loop working in SIT for metadata stream
 
-**Status:** ✅ Redesigned on this branch (see "Consumer scope redesign"
-below).
+### Why `filter_subject` (singular, not plural)
 
-- `ensure_artifact_consumer()` creates **ONE** durable per pod:
-  `artifact-sync-{pod_name}` (e.g. `artifact-sync-mcs-statefulset-0`),
-  with `filter_subjects` = **all** `{func_id}-{sanitized_name}` subjects
-  configured across every product in `/etc/config`
-- Unique `deliver_subject` per pod: `artifact-sync-{pod_name}.deliver`
-- `deliver_policy=NEW`, `ack_policy=EXPLICIT`, `ack_wait=300s`
-- `lifespan.py` step 6 calls this once per pod startup, then subscribes
-  to that pod's own deliver subject with `handle_artifact_message`
-- Each pod independently fetches new model/kernel artifact versions into
-  its own PVC for ANY configured `func_id` when it receives a
-  `model-update` style event
+`filter_subjects` (list) requires NATS server **2.10+**. siteMC NATS runs
+**2.9.20-alpine** which silently ignores `filter_subjects`. Using
+`filter_subject` (singular) with one consumer per func_id is the correct
+approach for NATS 2.9.x and provides proper subject isolation across
+multiple MCS deployments sharing the same streams.
 
-**Idempotency / error handling (this branch):** `ensure_artifact_consumer`
-distinguishes:
-- "consumer already exists" — detected via JetStream API error code
-  `10013` (`JSConsumerNameExistErr`, the documented nats-server code for
-  "consumer name already in use"), with a fallback check on `description`
-  containing "already" in case a different server version returns a
-  different code -> log info (with `err_code`/`description` for
-  visibility), reuse (expected on every pod restart)
-- any other `APIError` or exception -> log error with `err_code` +
-  `description`, raise `RuntimeError` -> pod restarts (no silent failures)
-
----
-
-## 3. Metadata Stream — Pull Consumer (Queue Group), shared across pods
-
-**Status:** ✅ Redesigned on this branch (see "Consumer scope redesign"
-below).
-
-- `ensure_metadata_consumer()` creates **ONE** durable for the entire
-  deployment: `metadata-sync-{statefulset_name}` (e.g.
-  `metadata-sync-mcs-statefulset` — no ordinal, shared identically by all
-  3 pods), with `filter_subjects` = **all** `{func_id}-{sanitized_name}`
-  subjects configured across every product in `/etc/config`
-- `deliver_policy=NEW`, `ack_policy=EXPLICIT`, `ack_wait=30s`,
-  `replay_policy=INSTANT`
-- All 3 pods call `add_consumer()` with the **same name + config** on
-  startup — first pod creates it, the other two get "already exists" and
-  reuse it (same error-handling as Task 2)
-- `fetch_loop.py` runs a **single** `asyncio.Task` per pod, fetching from
-  this one shared durable consumer — NATS delivers each message (for any
-  configured `func_id`) to exactly one fetching pod, giving queue-group
-  semantics across the whole deployment
-- On success: `handle_metadata_message` updates `model_list` in Redis,
-  then `msg.ack()`
-- On failure: `msg.nak()` -> NATS redelivers to whichever pod fetches next
-  after `ack_wait` (30s)
-
----
-
-## Consumer scope redesign (this branch)
-
-**Previous design (PR #1):** one consumer **per `(pod, func_id)`** for
-artifacts, one consumer **per `func_id`** for metadata — i.e. N consumers
-where N = number of configured functions.
-
-**New design (this branch):** `func_id` moves entirely into
-**`filter_subjects`** (a list), and consumer identity is scoped to
-**deployment**, not function:
-
-| Consumer | Scope | Name | filter_subjects |
-|---|---|---|---|
-| Artifact (push) | Per pod | `artifact-sync-{pod_name}` | all configured `{func_id}-{sanitized_name}` subjects |
-| Metadata (pull) | Per deployment (shared) | `metadata-sync-{statefulset_name}` | all configured `{func_id}-{sanitized_name}` subjects |
-
-**Why:**
-- Adding/removing a `func_id` from `productConfig` no longer requires
-  creating/deleting NATS consumers — just update `filter_subjects` (a
-  config-only change)
-- Consumer **names** are now stable across config changes and naturally
-  unique across deployments as long as `fullnameOverride` is unique
-  (artifact consumer includes pod ordinal; metadata consumer is the
-  StatefulSet name without ordinal, identical across this deployment's 3
-  pods — required for queue-group `fetch()` to work)
-- `core/k8s/pod.py` gained `get_statefulset_name()`: strips the trailing
-  `-<ordinal>` from `HOSTNAME` (falls back to full pod name with a warning
-  if it doesn't match `<name>-<digits>`)
-
-**Verified:**
-```
-pod=mcs-statefulset-0  artifact_consumer=artifact-sync-mcs-statefulset-0   metadata_consumer=metadata-sync-mcs-statefulset
-pod=mcs-statefulset-1  artifact_consumer=artifact-sync-mcs-statefulset-1   metadata_consumer=metadata-sync-mcs-statefulset
-pod=mcs-statefulset-2  artifact_consumer=artifact-sync-mcs-statefulset-2   metadata_consumer=metadata-sync-mcs-statefulset
-```
-3 distinct artifact consumers (broadcast), 1 shared metadata consumer
-(queue group) — confirmed with a 2-function product config, both subjects
-correctly appear in both consumers' `filter_subjects`.
-
----
-
-## 4. Consumer creation permissions — platform vs MCS
-
-**Decision:** Platform engineers pre-create **streams only**
-(`MLOP-MCS-ARTIFACT`, `MLOP-MCS-METADATA` — already done ✅). MCS's NATS
-user needs permission to:
-- **query JetStream account info** (`$JS.API.INFO`) — used by
-  `nats account info` and `nats-py`'s `js.account_info()` during
-  connection setup; without this, connection fails with
-  `Permissions Violation for publish to $JS.API.INFO` /
-  "No response from Jetstream server"
-- **create consumers** on both streams (`$JS.API.CONSUMER.CREATE...`,
-  `$JS.API.CONSUMER.DURABLE.CREATE...`)
-- **query consumer/stream info** (`$JS.API.CONSUMER.INFO...`,
-  `$JS.API.STREAM.INFO...`) — used by `find_stream`/`verify_stream` and
-  `add_consumer`'s idempotency check
-- **subscribe** to its own artifact deliver subject (broadcast push)
-- **pull** from the shared metadata consumer (`$JS.API.CONSUMER.MSG.NEXT...`)
-- **subscribe** to `_INBOX.>` — NATS request-reply pattern used
-  internally by all JetStream API calls
-
----
-
-## 5. Creating `nats.creds` for MCS (action for platform team / you)
-
-NATS decentralized auth: a `.creds` file bundles a **user JWT** + **NKey
-seed**. Created via `nsc` (NATS account/user CLI), scoped to an existing
-**operator/account** for siteMC.
-
-**User naming:** each MCS deployment/site needs its own user. Use the
-**StatefulSet name** (`fullnameOverride` in `values.yaml` — same value
-used to derive `metadata-sync-{statefulset_name}`) as the identifier, so
-NATS user naming stays consistent with consumer naming and is
-automatically unique per deployment:
+### Consumer Naming
 
 ```
-mcs-{statefulset_name}-synchronizer
+Artifact (per pod, per func_id):
+  artifact-sync-mcs-statefulset-0-funcID_123
+  artifact-sync-mcs-statefulset-0-funcID_456
+  artifact-sync-mcs-statefulset-1-funcID_123
+  ...
+
+Metadata (per statefulset, per func_id):
+  metadata-sync-mcs-statefulset-funcID_123
+  metadata-sync-mcs-statefulset-funcID_456
 ```
 
-e.g. if `fullnameOverride: mcs-statefulset`, the user is
-`mcs-mcs-statefulset-synchronizer`. If `fullnameOverride` is already
-deployment-unique (which it must be, per Task "Consumer scope redesign"),
-this naming requires no additional site/environment identifier.
+`pod_name` = `HOSTNAME` env var (K8s downward API) e.g. `mcs-statefulset-0`
+`statefulset_name` = `pod_name` with `-{ordinal}` stripped e.g. `mcs-statefulset`
 
-Full script (also at `documents/generate-mcs-creds.sh`) — edit
-`STATEFULSET_NAME` and `NATS_URL` at the top, then run via
-[`synadia/nats-box`](https://github.com/synadia-io/nats-box) (bundles
-`nsc` + `nats` CLI + `nk`):
+### Fetch Loop Per func_id
+
+```
+Per pod, per func_id:
+  asyncio.Task: artifact-fetch-{func_id}  → psub.fetch(batch=1, timeout=5s)
+  asyncio.Task: metadata-fetch-{func_id}  → psub.fetch(batch=1, timeout=5s)
+
+2 func_ids → 4 total asyncio.Tasks per pod
+```
+
+Server-side long-poll — no busy spin. Independent per func_id — one func_id's
+backlog cannot block another.
+
+### Startup Sequence
+
+```
+1. Load one.properties + {Product}.json from /etc/config
+2. Connect NATS (nats.creds from Vault)
+3. Verify MLOP-MCS-ARTIFACT stream exists  → RuntimeError if missing
+4. Verify MLOP-MCS-METADATA stream exists  → RuntimeError if missing
+5. Connect Redis Sentinel
+6. Resolve pod_name (HOSTNAME) + statefulset_name (strip ordinal)
+7. Per func_id: ensure_artifact_consumer() — pull, per (pod, func_id)
+8. Per func_id: ensure_metadata_consumer() — pull, per (statefulset, func_id)
+9. start_fetch_loops() — 2 tasks per func_id (artifact + metadata)
+10. /health returns 200 — synchronizer ready
+```
+
+---
+
+## NATS User Permissions
+
+MCS user: `mcs-{statefulset_name}-synchronizer`
+Operator: `mlp` | Account: `mlop`
+
+Required permissions:
 
 ```bash
-docker run --rm -it -v $(pwd):/work -w /work synadia/nats-box:latest \
-  bash documents/generate-mcs-creds.sh
+--allow-pub '$JS.API.INFO'
+--allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-ARTIFACT'
+--allow-pub '$JS.API.STREAM.INFO.MLOP-MCS-METADATA'
+--allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-ARTIFACT.>'
+--allow-pub '$JS.API.CONSUMER.CREATE.MLOP-MCS-METADATA.>'
+--allow-pub '$JS.API.CONSUMER.DURABLE.CREATE.MLOP-MCS-ARTIFACT.>'
+--allow-pub '$JS.API.CONSUMER.DURABLE.CREATE.MLOP-MCS-METADATA.>'
+--allow-pub '$JS.API.CONSUMER.INFO.MLOP-MCS-ARTIFACT.>'
+--allow-pub '$JS.API.CONSUMER.INFO.MLOP-MCS-METADATA.>'
+--allow-pub '$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-ARTIFACT.>'
+--allow-pub '$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-METADATA.>'
+--allow-pub '$JS.API.CONSUMER.DELETE.MLOP-MCS-ARTIFACT.>'
+--allow-sub '_INBOX.>'
 ```
 
-```bash
-#!/bin/bash
-# ============================================================================
-# Generate nats.creds for an MCS synchronizer deployment
-#
-# Run inside the synadia/nats-box container, which bundles nsc + nats CLI:
-#
-#   docker run --rm -it -v $(pwd):/work -w /work synadia/nats-box:latest \
-#     bash generate-mcs-creds.sh
-#
-# Or, if nsc/nats are installed locally, just run this script directly.
-# ============================================================================
-set -euo pipefail
+Note: `--allow-sub 'artifact-sync-*.deliver'` is **NOT needed** — artifact
+stream uses pull consumers (no deliver_subject).
 
-# ── EDIT THIS ───────────────────────────────────────────────────────────────
-SITEMC_OPERATOR="mlp"                        # siteMC NATS operator (only one exists)
-SITEMC_ACCOUNT="mlop"                        # siteMC NATS account
-STATEFULSET_NAME="<STATEFULSET_NAME>"        # .Values.fullnameOverride, e.g. mcs-statefulset
-NATS_URL="<NATS_URL>"                        # e.g. nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
+Full script: `documents/generate-mcs-creds.sh`
 
-ARTIFACT_STREAM="MLOP-MCS-ARTIFACT"
-METADATA_STREAM="MLOP-MCS-METADATA"
-USER_NAME="mcs-${STATEFULSET_NAME}-synchronizer"
-OUTPUT_CREDS="nats.creds"
-# ─────────────────────────────────────────────────────────────────────────────
+---
 
-echo "== Selecting operator/account context =="
-nsc env -o "${SITEMC_OPERATOR}"
-nsc env -a "${SITEMC_ACCOUNT}"
+## Bugs Fixed on This Branch
 
-echo "== Creating user: ${USER_NAME} =="
+| Issue | Description | Fix |
+|---|---|---|
+| #4 | `credentials=` → `user_credentials=` | `core/nats/client.py` |
+| #5 | `js.consumer()` doesn't exist | `pull_subscribe_bind()` in `fetch_loop.py` |
+| #6 | `js.find_stream()` doesn't exist | `stream_info()` in `core/nats/client.py` |
+| #7 | `nc.subscribe()` wrong for JetStream | `js.subscribe_bind(manual_ack=True)` → later removed entirely (pull) |
+| #11 | Missing `nkeys` dependency | Added to `requirements.txt` |
+| #12 | `get_settings()` fires before bootstrap | Moved inside functions in 10 files |
+| #13 | `core/k8s/bootstrap.py` missing | New file added |
+| #15 | `filter_subjects` not supported on NATS 2.9.20 | Reverted to `filter_subject` per func_id |
+| #16 | One consumer per func_id for isolation | Implemented per-func_id consumers |
+| #18 | Push consumer replaced with pull | Unified pull pattern for both streams |
 
-# If the user already exists from a previous run, remove it first so the
-# permission set below is applied cleanly (nsc add user fails if it exists).
-if nsc describe user "${USER_NAME}" >/dev/null 2>&1; then
-  echo "User ${USER_NAME} already exists — deleting before recreate"
-  nsc delete user "${USER_NAME}"
-fi
+---
 
-nsc add user "${USER_NAME}" \
-  --allow-pub '$JS.API.INFO' \
-  --allow-pub "\$JS.API.STREAM.INFO.${ARTIFACT_STREAM}" \
-  --allow-pub "\$JS.API.STREAM.INFO.${METADATA_STREAM}" \
-  --allow-pub "\$JS.API.CONSUMER.CREATE.${ARTIFACT_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.CREATE.${METADATA_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.DURABLE.CREATE.${ARTIFACT_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.DURABLE.CREATE.${METADATA_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.INFO.${ARTIFACT_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.INFO.${METADATA_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.MSG.NEXT.${METADATA_STREAM}.>" \
-  --allow-pub "\$JS.API.CONSUMER.DELETE.${ARTIFACT_STREAM}.>" \
-  --allow-sub "artifact-sync-${STATEFULSET_NAME}-*.deliver" \
-  --allow-sub '_INBOX.>'
+## Files Changed on This Branch (vs main)
 
-echo "== Generating ${OUTPUT_CREDS} =="
-nsc generate creds -a "${SITEMC_ACCOUNT}" -n "${USER_NAME}" > "${OUTPUT_CREDS}"
-echo "Wrote ${OUTPUT_CREDS}"
+### Replace in enterprise codebase
+| File | Key change |
+|---|---|
+| `apps/synchronizer/consumers.py` | Pull consumers, `filter_subject` per func_id |
+| `apps/synchronizer/fetch_loop.py` | Both artifact + metadata fetch loops |
+| `apps/synchronizer/handlers.py` | `get_settings()` inside functions |
+| `apps/synchronizer/lifespan.py` | Pull-only, no `subscribe_bind` |
+| `apps/synchronizer/main.py` | Bootstrap called first |
+| `core/config/settings.py` | Added `JANITOR_*`, `STAGE_NAME`, `APP_NAME` |
+| `core/http/artifact_client.py` | `get_settings()` inside functions |
+| `core/k8s/configmap.py` | `*.json` glob, `load_one_properties()` restored |
+| `core/k8s/pod.py` | Added `get_statefulset_name()` |
+| `core/nats/client.py` | `user_credentials=`, `stream_info()` |
+| `core/redis/client.py` | Sentinel client, `get_settings()` inside functions |
+| `core/redis/model_list.py` | `get_settings()` inside functions |
+| `helm/mcs/values.yaml` | Fixed `appModule: apps.X.main:app` |
+| `requirements.txt` | Added `nkeys==0.2.1` |
 
-echo "== Verifying connectivity =="
-if command -v nats >/dev/null 2>&1; then
-  nats account info --creds "${OUTPUT_CREDS}" --server "${NATS_URL}"
-else
-  echo "nats CLI not found — skipping connectivity check."
-  echo "Run manually: nats account info --creds ${OUTPUT_CREDS} --server ${NATS_URL}"
-fi
+### Add to enterprise codebase (new files)
+| File | What it does |
+|---|---|
+| `core/k8s/bootstrap.py` | Loads `one.properties` into `os.environ` before `get_settings()` |
+| `documents/generate-mcs-creds.sh` | `nsc` script for generating `nats.creds` |
 
-echo
-echo "== Done =="
-echo "Next: store the contents of ${OUTPUT_CREDS} in Vault at the path"
-echo "configured in values.yaml (vaultSecrets[0].path), under key 'nats.creds'."
-```
+---
 
-**Notes:**
-- `$JS.API.CONSUMER.DURABLE.CREATE.<stream>.>` is the legacy alias for
-  creating **durable** consumers; included alongside
-  `$JS.API.CONSUMER.CREATE.<stream>.>` for compatibility across NATS
-  server versions.
-- `artifact-sync-<STATEFULSET_NAME>-*.deliver` covers exactly 3 deliver
-  subjects for this deployment (`artifact-sync-{fullname}-0.deliver`,
-  `-1-`, `-2-`) — one per pod, regardless of how many `func_id`s are
-  configured. Scoping the wildcard to `<STATEFULSET_NAME>` (rather than a
-  bare `artifact-sync-*`) also prevents this user from subscribing to
-  another deployment's deliver subjects.
-- `$JS.API.CONSUMER.DELETE...` included so a future re-deploy with changed
-  consumer config (e.g. different `ack_wait` or `filter_subjects`) can
-  clean up and recreate — not currently used by the synchronizer but
-  harmless to include now. Note: changing `filter_subjects` on an existing
-  durable consumer may require delete+recreate depending on server
-  version, since `add_consumer` with a changed config for an existing
-  name returns "already exists" rather than updating it in place.
-- If `nsc` reports the account/operator already exists with a different
-  CLI workflow (e.g. memory-resolver vs full-resolver setup), the
-  `--allow-pub`/`--allow-sub` flags and `generate creds` command are the
-  parts that matter; `nsc env` setup may differ per your existing siteMC
-  NATS configuration.
+## Outstanding Action Items
 
-**Action needed:**
-- [ ] Run the `nsc` commands above against siteMC's operator/account
-- [ ] Verify generated `nats.creds` works: `nats account info
-      --creds nats.creds --server <NATS_URL>`
-- [ ] Store `nats.creds` content in Vault at `vaultSecrets[0].path`
-      (see `values.yaml`), key `nats.creds`
-
+- [ ] Delete old consumers from NATS (created without `filter_subject`):
+  ```bash
+  nats consumer rm MLOP-MCS-ARTIFACT artifact-sync-mcs-statefulset-0
+  nats consumer rm MLOP-MCS-ARTIFACT artifact-sync-mcs-statefulset-1
+  nats consumer rm MLOP-MCS-ARTIFACT artifact-sync-mcs-statefulset-2
+  nats consumer rm MLOP-MCS-METADATA metadata-sync-mcs-statefulset
+  ```
+- [ ] Update NATS user — add `$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-ARTIFACT.>`,
+  remove `--allow-sub artifact-sync-*.deliver` (no longer needed):
+  ```bash
+  nsc edit user mcs-mcs-statefulset-synchronizer \
+    --allow-pub '$JS.API.CONSUMER.MSG.NEXT.MLOP-MCS-ARTIFACT.>'
+  nsc generate creds -a mlop -n mcs-mcs-statefulset-synchronizer > nats.creds
+  # Update Vault + restart pod
+  ```
+- [ ] Rebuild image from `v0.3.7-synchronizer-nats` and redeploy
+- [ ] Verify new consumers created in NATS:
+  ```bash
+  nats consumer ls MLOP-MCS-ARTIFACT --creds nats.creds --server <NATS_URL>
+  nats consumer ls MLOP-MCS-METADATA --creds nats.creds --server <NATS_URL>
+  ```
+- [ ] Test artifact message:
+  ```bash
+  nats pub {func_id}-{sanitized_name} \
+    '{"function_id":"...","artifact_type":"model","deployed_version":"v1.0.0"}' \
+    --creds nats.creds --server <NATS_URL>
+  ```
+- [ ] Test metadata message and verify Redis updated
+- [ ] Merge `feature/synchronizer-NATS` → `main` via PR #17
