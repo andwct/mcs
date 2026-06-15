@@ -20,13 +20,23 @@ for consistency, backpressure, and simpler reconnect logic.
 | | Artifact | Metadata |
 |---|---|---|
 | **Stream** | `MLOP-MCS-ARTIFACT` | `MLOP-MCS-METADATA` |
+| **Stream interest subject** | `MLOP-MCS-ARTIFACT.>` | `MLOP-MCS-METADATA.>` |
 | **Consumer type** | Pull | Pull |
 | **Scope** | Per (pod, func_id) | Per (statefulset, func_id) |
 | **Consumer name** | `artifact-sync-{pod_name}-{func_id}` | `metadata-sync-{statefulset_name}-{func_id}` |
-| **filter_subject** | `{func_id}-{sanitized_name}` | `{func_id}-{sanitized_name}` |
+| **filter_subject** | `MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}` | `MLOP-MCS-METADATA.{func_id}-{sanitized_name}` |
 | **Semantics** | Broadcast — own consumer per pod | Queue-group — shared consumer across 3 pods |
 | **Fetch loop** | One `asyncio.Task` per func_id | One `asyncio.Task` per func_id |
 | **Handler** | `handle_artifact_message()` | `handle_metadata_message()` |
+
+**Subject format:** `filter_subject` must be a subset of the stream's interest
+subject. Both streams were created with `{STREAM_NAME}.>` as their interest
+subject, so all consumer filter subjects must be prefixed with the stream name:
+- `MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}` — valid subset of `MLOP-MCS-ARTIFACT.>`
+- `MLOP-MCS-METADATA.{func_id}-{sanitized_name}` — valid subset of `MLOP-MCS-METADATA.>`
+
+When siteMC publishes messages to these streams, it must publish to subjects
+matching these patterns.
 
 ### Why Pull for Both
 
@@ -48,14 +58,14 @@ multiple MCS deployments sharing the same streams.
 
 ```
 Artifact (per pod, per func_id):
-  artifact-sync-mcs-statefulset-0-funcID_123
-  artifact-sync-mcs-statefulset-0-funcID_456
-  artifact-sync-mcs-statefulset-1-funcID_123
+  artifact-sync-mcs-statefulset-0-funcID_123  filter: MLOP-MCS-ARTIFACT.funcID_123-funcName_123
+  artifact-sync-mcs-statefulset-0-funcID_456  filter: MLOP-MCS-ARTIFACT.funcID_456-funcName_456
+  artifact-sync-mcs-statefulset-1-funcID_123  filter: MLOP-MCS-ARTIFACT.funcID_123-funcName_123
   ...
 
 Metadata (per statefulset, per func_id):
-  metadata-sync-mcs-statefulset-funcID_123
-  metadata-sync-mcs-statefulset-funcID_456
+  metadata-sync-mcs-statefulset-funcID_123  filter: MLOP-MCS-METADATA.funcID_123-funcName_123
+  metadata-sync-mcs-statefulset-funcID_456  filter: MLOP-MCS-METADATA.funcID_456-funcName_456
 ```
 
 `pod_name` = `HOSTNAME` env var (K8s downward API) e.g. `mcs-statefulset-0`
@@ -135,6 +145,7 @@ Full script: `documents/generate-mcs-creds.sh`
 | #15 | `filter_subjects` not supported on NATS 2.9.20 | Reverted to `filter_subject` per func_id |
 | #16 | One consumer per func_id for isolation | Implemented per-func_id consumers |
 | #18 | Push consumer replaced with pull | Unified pull pattern for both streams |
+| #19 | `filter_subject` not a subset of stream interest subject | Prefixed subjects with stream name: `MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}` |
 
 ---
 
@@ -143,15 +154,16 @@ Full script: `documents/generate-mcs-creds.sh`
 ### Replace in enterprise codebase
 | File | Key change |
 |---|---|
-| `apps/synchronizer/consumers.py` | Pull consumers, `filter_subject` per func_id |
-| `apps/synchronizer/fetch_loop.py` | Both artifact + metadata fetch loops |
+| `apps/synchronizer/consumers.py` | Pull consumers, `filter_subject` per func_id with stream prefix |
+| `apps/synchronizer/fetch_loop.py` | Both artifact + metadata fetch loops, 5-tuple unpack |
 | `apps/synchronizer/handlers.py` | `get_settings()` inside functions |
-| `apps/synchronizer/lifespan.py` | Pull-only, no `subscribe_bind` |
+| `apps/synchronizer/lifespan.py` | Pull-only, 5-tuple unpack, stream-specific subjects |
 | `apps/synchronizer/main.py` | Bootstrap called first |
 | `core/config/settings.py` | Added `JANITOR_*`, `STAGE_NAME`, `APP_NAME` |
 | `core/http/artifact_client.py` | `get_settings()` inside functions |
-| `core/k8s/configmap.py` | `*.json` glob, `load_one_properties()` restored |
+| `core/k8s/configmap.py` | `*.json` glob, returns 5-tuple with artifact+metadata subjects |
 | `core/k8s/pod.py` | Added `get_statefulset_name()` |
+| `core/models/product.py` | Added `get_artifact_subject()`, `get_metadata_subject()` |
 | `core/nats/client.py` | `user_credentials=`, `stream_info()` |
 | `core/redis/client.py` | Sentinel client, `get_settings()` inside functions |
 | `core/redis/model_list.py` | `get_settings()` inside functions |
@@ -191,9 +203,18 @@ Full script: `documents/generate-mcs-creds.sh`
   ```
 - [ ] Test artifact message:
   ```bash
-  nats pub {func_id}-{sanitized_name} \
+  nats pub MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name} \
     '{"function_id":"...","artifact_type":"model","deployed_version":"v1.0.0"}' \
     --creds nats.creds --server <NATS_URL>
   ```
-- [ ] Test metadata message and verify Redis updated
+- [ ] Test metadata message:
+  ```bash
+  nats pub MLOP-MCS-METADATA.{func_id}-{sanitized_name} \
+    '{"function_id":"...","artifact_type":"model_list","online":[...]}' \
+    --creds nats.creds --server <NATS_URL>
+  ```
+  Verify Redis updated:
+  ```bash
+  redis-cli -h <redis-host> HGET mcs:model_list <func_id>
+  ```
 - [ ] Merge `feature/synchronizer-NATS` → `main` via PR #17

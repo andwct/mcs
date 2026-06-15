@@ -33,8 +33,8 @@ async def lifespan(app: FastAPI):
     func_subjects = get_all_function_subjects(products)
     logger.info(
         f"Loaded {len(products)} products, "
-        f"{len(func_subjects)} subjects: "
-        f"{[s for (_, _, _, s) in func_subjects]}"
+        f"{len(func_subjects)} functions: "
+        f"{[(f, a, m) for (_, f, _, a, m) in func_subjects]}"
     )
 
     # 2. Connect NATS
@@ -53,12 +53,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Running as pod: {pod_name} (StatefulSet: {statefulset_name})")
 
     # 6. Per func_id: create artifact pull consumer (broadcast — own consumer per pod)
-    for product_id, func_id, sanitized_name, subject in func_subjects:
-        await ensure_artifact_consumer(js, pod_name, func_id, subject)
+    for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
+        await ensure_artifact_consumer(js, pod_name, func_id, artifact_subject)
 
     # 7. Per func_id: create metadata pull consumer (queue-group — shared across pods)
-    for product_id, func_id, sanitized_name, subject in func_subjects:
-        await ensure_metadata_consumer(js, statefulset_name, func_id, subject)
+    for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
+        await ensure_metadata_consumer(js, statefulset_name, func_id, metadata_subject)
 
     # 8. Start fetch loops for BOTH streams — one artifact + one metadata task per func_id
     #    Unified pull pattern: backpressure-aware, easy reconnect, consistent codebase

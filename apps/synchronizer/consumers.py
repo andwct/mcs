@@ -18,20 +18,10 @@ def _is_already_exists_error(e: APIError) -> bool:
 
 
 def artifact_consumer_name(pod_name: str, func_id: str) -> str:
-    """
-    One pull consumer per (pod, func_id) — unique across pods and functions.
-    Each pod has its own consumer so every pod receives every artifact message
-    (broadcast semantics via independent consumers, not queue-group).
-    """
     return f"artifact-sync-{pod_name}-{func_id}"
 
 
 def metadata_consumer_name(statefulset_name: str, func_id: str) -> str:
-    """
-    One pull consumer per (statefulset, func_id) — shared across all 3 pods.
-    All pods fetch() from the same consumer giving queue-group semantics
-    (exactly one pod processes each metadata message).
-    """
     return f"metadata-sync-{statefulset_name}-{func_id}"
 
 
@@ -39,13 +29,15 @@ async def ensure_artifact_consumer(
     js: JetStreamContext,
     pod_name: str,
     func_id: str,
-    subject: str,
+    artifact_subject: str,
 ) -> None:
     """
     Create pull consumer for artifact broadcast per (pod, func_id).
 
-    Pull consumer — each pod independently fetches from its own durable
-    consumer, achieving broadcast fan-out. No deliver_subject needed.
+    filter_subject must be a subset of stream's interest subject
+    MLOP-MCS-ARTIFACT.> — so subject format is:
+    MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}
+
     Compatible with NATS 2.9.x (filter_subject singular).
     """
     settings = get_settings()
@@ -55,7 +47,7 @@ async def ensure_artifact_consumer(
             settings.NATS_ARTIFACT_STREAM,
             ConsumerConfig(
                 durable_name=name,
-                filter_subject=subject,
+                filter_subject=artifact_subject,
                 deliver_policy=DeliverPolicy.NEW,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=settings.NATS_ACK_WAIT_ARTIFACT_SECONDS,
@@ -63,7 +55,7 @@ async def ensure_artifact_consumer(
         )
         logger.info(
             f"Artifact pull consumer created: {name} "
-            f"filter_subject={subject}"
+            f"filter_subject={artifact_subject}"
         )
     except APIError as e:
         if _is_already_exists_error(e):
@@ -89,10 +81,15 @@ async def ensure_metadata_consumer(
     js: JetStreamContext,
     statefulset_name: str,
     func_id: str,
-    subject: str,
+    metadata_subject: str,
 ) -> None:
     """
     Create pull consumer for metadata per func_id, shared across all pods.
+
+    filter_subject must be a subset of stream's interest subject
+    MLOP-MCS-METADATA.> — so subject format is:
+    MLOP-MCS-METADATA.{func_id}-{sanitized_name}
+
     Compatible with NATS 2.9.x (filter_subject singular).
     """
     settings = get_settings()
@@ -102,7 +99,7 @@ async def ensure_metadata_consumer(
             settings.NATS_METADATA_STREAM,
             ConsumerConfig(
                 durable_name=name,
-                filter_subject=subject,
+                filter_subject=metadata_subject,
                 deliver_policy=DeliverPolicy.NEW,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=settings.NATS_ACK_WAIT_METADATA_SECONDS,
@@ -110,7 +107,8 @@ async def ensure_metadata_consumer(
             ),
         )
         logger.info(
-            f"Metadata pull consumer created: {name} filter_subject={subject}"
+            f"Metadata pull consumer created: {name} "
+            f"filter_subject={metadata_subject}"
         )
     except APIError as e:
         if _is_already_exists_error(e):
