@@ -5,43 +5,45 @@ from core.models.product import ProductConfig
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+_ENV_CONFIG_FILENAME = "one.properties"
 
 
-def load_env_config() -> dict[str, str]:
-    """
-    Load envConfig.json from ConfigMap mount path.
+def load_one_properties() -> dict[str, str]:
+    """Parse one.properties (key=value) from ConfigMap mount path."""
+    settings = get_settings()
+    props_path = Path(settings.CONFIGMAP_MOUNT_PATH) / _ENV_CONFIG_FILENAME
+    if not props_path.exists():
+        raise FileNotFoundError(
+            f"{_ENV_CONFIG_FILENAME} not found at {props_path}"
+        )
 
-    This is a flat { "KEY": "value" } JSON object — the same data used to
-    populate the env-config ConfigMap (envFrom -> settings.py). It is also
-    mounted as a file so non-env-var consumers (if any) can read it directly.
-    """
-    path = Path(settings.CONFIGMAP_MOUNT_PATH) / settings.CONFIGMAP_ENV_CONFIG_FILE
-    if not path.exists():
-        raise FileNotFoundError(f"{settings.CONFIGMAP_ENV_CONFIG_FILE} not found at {path}")
+    props: dict[str, str] = {}
+    for line in props_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        props[key.strip()] = value.strip()
 
-    config = json.loads(path.read_text())
-    logger.info(f"Loaded {settings.CONFIGMAP_ENV_CONFIG_FILE}: {list(config.keys())}")
-    return config
+    logger.info(f"Loaded {_ENV_CONFIG_FILENAME}: {list(props.keys())}")
+    return props
 
 
 def load_product_configs() -> list[ProductConfig]:
     """
     Scan ConfigMap mount for product JSON files and return ProductConfig list.
-
-    Product files are named "{ProductName}.json" (e.g. "ABC.json"). All
-    *.json files in the mount path are treated as product configs, EXCEPT
-    CONFIGMAP_ENV_CONFIG_FILE (envConfig.json), which holds flat env vars
-    and is loaded separately via load_env_config().
+    All *.json files are treated as product configs (one.properties is not JSON
+    so it is naturally excluded).
     """
+    settings = get_settings()
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
-    product_files = sorted(
-        f for f in mount.glob("*.json")
-        if f.name != settings.CONFIGMAP_ENV_CONFIG_FILE
-    )
+    product_files = sorted(mount.glob("*.json"))
 
     if not product_files:
-        raise FileNotFoundError(f"No product *.json files found in {mount}")
+        raise FileNotFoundError(
+            f"No product *.json files found in {mount}"
+        )
 
     products: list[ProductConfig] = []
     for f in product_files:
@@ -62,19 +64,29 @@ def load_product_configs() -> list[ProductConfig]:
 
 def get_all_function_subjects(
     products: list[ProductConfig],
-) -> list[tuple[str, str, str, str]]:
+) -> list[tuple[str, str, str, str, str]]:
     """
-    Return flat list of (product_id, func_id, sanitized_name, subject).
+    Return flat list of (product_id, func_id, sanitized_name,
+    artifact_subject, metadata_subject).
 
-    sanitized_name comes directly from FUNCTION_NAME_MAPPING in
-    {ProductName}.json — never derived by splitting the subject string.
+    artifact_subject = "MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}"
+    metadata_subject = "MLOP-MCS-METADATA.{func_id}-{sanitized_name}"
 
-    subject = "{func_id}-{sanitized_name}"
+    Both are valid subsets of their stream's interest subject (*.>).
+    sanitized_name comes directly from FUNCTION_NAME_MAPPING — never
+    derived by splitting the subject string.
     """
     result = []
     for product in products:
         for func_id in product.FUNCTION_LIST:
             sanitized_name = product.get_sanitized_name(func_id)
-            subject = product.get_subject(func_id)
-            result.append((product.PRODUCT_ID, func_id, sanitized_name, subject))
+            artifact_subject = product.get_artifact_subject(func_id)
+            metadata_subject = product.get_metadata_subject(func_id)
+            result.append((
+                product.PRODUCT_ID,
+                func_id,
+                sanitized_name,
+                artifact_subject,
+                metadata_subject,
+            ))
     return result

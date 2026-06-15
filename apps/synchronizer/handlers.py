@@ -7,9 +7,7 @@ from core.redis.model_list import set_model_list
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-# Per-key lock: deduplicates concurrent artifact fetches for same (func_id, version) on this pod
 _artifact_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -18,7 +16,7 @@ async def handle_artifact_message(msg: Msg) -> None:
         payload = ArtifactMessage.model_validate_json(msg.data)
     except Exception as e:
         logger.error(f"Failed to parse ArtifactMessage: {e} raw={msg.data}")
-        await msg.ack()   # ack bad message — don't redeliver unparseable payload
+        await msg.ack()
         return
 
     if payload.artifact_type != ArtifactType.MODEL:
@@ -44,6 +42,7 @@ async def handle_artifact_message(msg: Msg) -> None:
 
 async def _fetch_and_store(func_id: str, version: str) -> None:
     from core.http.artifact_client import fetch_model_file
+    settings = get_settings()
 
     dest = Path(settings.STORAGE_PATH) / func_id / version / "model.bin"
     if dest.exists():

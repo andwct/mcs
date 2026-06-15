@@ -14,6 +14,7 @@ starlette>=0.27.0
 
 # NATS JetStream client
 nats-py>=2.7.0
+nkeys==0.2.1
 
 # Redis — asyncio client, Sentinel support included in redis-py
 # Compatible with Bitnami Redis Sentinel chart 18.2.0 (Redis 7.2.4)

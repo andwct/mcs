@@ -1,7 +1,8 @@
-# TEMPORARY (rollback to v1.0.13 values.yaml shape): must run before any
-# other import that calls get_settings() at module level, so NATS_URL,
-# REDIS_SENTINEL_*, etc. from the mounted one.properties land in os.environ
-# before pydantic-settings reads it.
+# bootstrap_env_from_one_properties() MUST be called before any import
+# that triggers get_settings() — pydantic-settings reads os.environ once
+# at first construction (@lru_cache). By running bootstrap here first,
+# NATS_URL, REDIS_SENTINEL_*, etc. from one.properties are in os.environ
+# before any module-level code runs get_settings().
 from core.k8s.bootstrap import bootstrap_env_from_one_properties
 bootstrap_env_from_one_properties()
 
