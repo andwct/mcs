@@ -191,6 +191,7 @@ configMap:
       SITE_AUTHORIZATION_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
       SITE_ARTIFACT_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
       SITE_META_CACHE_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      META_CACHE_REQUEST_TIMEOUT_SECONDS=30
       APP_NAME=mcs
       STAGE_NAME=SIT
       CONFIGMAP_MOUNT_PATH=/etc/config

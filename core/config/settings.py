@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     SITE_AUTHORIZATION_URL: str = ""
     SITE_ARTIFACT_SERVICE_URL: str = ""
     SITE_META_CACHE_SERVICE_URL: str = ""
+    # Separate timeouts: artifact fetches can be slow (large model files),
+    # meta cache fetches are lightweight JSON responses.
+    META_CACHE_REQUEST_TIMEOUT_SECONDS: int = 30
 
     # ── Auth ──────────────────────────────────────────────────────────────
     MODEL_CENTER_ACCOUNT: str = ""

@@ -36,7 +36,7 @@ async def _get_content(
     stream=True for streaming responses (kernel_list, package_list).
     """
     settings = get_settings()
-    timeout = httpx.Timeout(settings.NATS_ACK_WAIT_ARTIFACT_SECONDS)
+    timeout = httpx.Timeout(settings.META_CACHE_REQUEST_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(
         auth=_auth(account, password),

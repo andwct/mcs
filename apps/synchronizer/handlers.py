@@ -13,7 +13,6 @@ from core.http.meta_client import (
     fetch_package_list,
     fetch_pat_list,
 )
-from apps.synchronizer.state import get_product_by_id
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -86,15 +85,10 @@ async def handle_metadata_message(msg: Msg) -> None:
     func_id = payload.function_id
     product_id = payload.product_id
 
-    try:
-        product = get_product_by_id(product_id)
-    except KeyError as e:
-        logger.error(f"Unknown product_id={product_id}: {e}")
-        await msg.ack()
-        return
-
-    account = product.MODEL_CENTER_ACCOUNT
-    password = product.MODEL_CENTER_PASSWORD
+    # Use global credentials — same across all products
+    settings = get_settings()
+    account = settings.MODEL_CENTER_ACCOUNT
+    password = settings.MODEL_CENTER_PASSWORD
 
     dispatch = {
         MetaType.MODEL_LIST:   _handle_model_list,
@@ -129,8 +123,8 @@ async def _handle_model_list(
 ) -> None:
     """
     Fetch full model list for function_id, extract the updated model record
-    (identified by payload.model_id), and update just that field in Redis.
-    Fine-grained O(1) update — other models are not affected.
+    from the 'online' list (identified by payload.model_id), and update
+    just that one field in Redis. Fine-grained O(1) update.
     """
     model_id = payload.model_id
     if not model_id:
@@ -139,12 +133,13 @@ async def _handle_model_list(
 
     content = await fetch_model_list(func_id, product_id, account, password)
 
-    # Find the updated model record in the response
-    record = _extract_model_record(content, model_id)
+    # content = {"online": [...], "shadow": [...], "headers": {...}}
+    online = content.get("online", [])
+    record = _extract_model_record(online, model_id)
     if record is None:
         logger.warning(
-            f"model_id={model_id} not found in model_list response "
-            f"for func_id={func_id} — may have been deleted"
+            f"model_id={model_id} not found in online list "
+            f"for func_id={func_id} — model may be in shadow or deleted"
         )
         return
 
@@ -188,17 +183,9 @@ async def _handle_pat_list(
     logger.info(f"pat_list updated: func_id={func_id}")
 
 
-def _extract_model_record(content, model_id: str) -> dict | None:
-    """
-    Extract a single model record from the siteMC model_list response content.
-    content may be:
-      - dict {modelId: record}  → direct lookup
-      - list [record, ...]      → find by modelId field
-    """
-    if isinstance(content, dict):
-        return content.get(model_id)
-    if isinstance(content, list):
-        for record in content:
-            if str(record.get("modelId", "")) == model_id:
-                return record
+def _extract_model_record(online: list, model_id: str) -> dict | None:
+    """Find a model record by modelId from the 'online' list."""
+    for record in online:
+        if str(record.get("modelId", "")) == model_id:
+            return record
     return None
