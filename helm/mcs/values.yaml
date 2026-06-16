@@ -197,6 +197,7 @@ configMap:
       CONFIGMAP_MOUNT_PATH=/etc/config
       NATS_URL=nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
       NATS_CREDS_FILE=/root/mcs-secret/nats.creds
+      SECRET_MOUNT_PATH=/root/mcs-secret
       NATS_ARTIFACT_STREAM=MLOP-MCS-ARTIFACT
       NATS_METADATA_STREAM=MLOP-MCS-METADATA
       NATS_ACK_WAIT_ARTIFACT_SECONDS=300
