@@ -77,13 +77,24 @@ async def fetch_model_list(
 ) -> dict:
     """
     GET /meta-cache/model_list/{function_id}
-    Returns raw model list payload directly:
-    {"online": [...], "shadow": [...], "headers": {...}}
+
+    siteMC wraps the response in an envelope:
+    {"status_code": "...", "message": "...", "content": {"online": [...], "shadow": [...], "headers": {...}}}
+
+    Returns content only: {"online": [...], "shadow": [...], "headers": {...}}
+    Other endpoints (kernel_list, package_list, pat_list) return raw response
+    directly with no envelope — only model_list has this wrapper.
     """
     settings = get_settings()
     url = f"{settings.SITE_META_CACHE_SERVICE_URL}/meta-cache/model_list/{function_id}"
     logger.info(f"Fetching model_list: function_id={function_id}")
-    return await _get(url, function_id, product_id, account, password)
+    data = await _get(url, function_id, product_id, account, password)
+    content = data.get("content")
+    if content is None:
+        raise ValueError(
+            f"model_list response missing 'content' field. Got keys: {list(data.keys())}"
+        )
+    return content
 
 
 async def fetch_kernel_list(
