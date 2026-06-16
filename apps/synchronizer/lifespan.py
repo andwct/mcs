@@ -11,6 +11,8 @@ from apps.synchronizer.consumers import (
     ensure_metadata_consumer,
 )
 from apps.synchronizer.fetch_loop import start_fetch_loops, cancel_fetch_loops
+from apps.synchronizer.state import init_product_state
+from apps.synchronizer.warmup import warm_up_redis
 
 logger = logging.getLogger(__name__)
 
@@ -37,31 +39,42 @@ async def lifespan(app: FastAPI):
         f"{[(f, a, m) for (_, f, _, a, m) in func_subjects]}"
     )
 
-    # 2. Connect NATS
+    # 2. Initialise product state — O(1) lookup by product_id/function_id
+    #    used by metadata handlers to get credentials for siteMC HTTP calls
+    init_product_state(products)
+
+    # 3. Connect NATS
     _, js = await nats_connect()
 
-    # 3. Verify streams — RuntimeError → pod restarts
+    # 4. Verify streams — RuntimeError → pod restarts
     await verify_stream(js, settings.NATS_ARTIFACT_STREAM)
     await verify_stream(js, settings.NATS_METADATA_STREAM)
 
-    # 4. Connect Redis Sentinel
+    # 5. Connect Redis Sentinel
     await redis_connect()
 
-    # 5. Resolve pod name + StatefulSet name
+    # 6. Resolve pod name + StatefulSet name
     pod_name = get_pod_name()
     statefulset_name = get_statefulset_name()
     logger.info(f"Running as pod: {pod_name} (StatefulSet: {statefulset_name})")
 
-    # 6. Per func_id: create artifact pull consumer (broadcast — own consumer per pod)
+    # 7. Initial Redis warm-up — fetch all four meta types from siteMC for
+    #    every configured function_id and write to Redis.
+    #    Done BEFORE consumers are created so Redis is fully populated before
+    #    any NATS update message is processed.
+    #    Deduplication: checks Redis before fetching — skips if already
+    #    populated by another pod.
+    await warm_up_redis(products)
+
+    # 8. Per func_id: create artifact pull consumer (broadcast — own consumer per pod)
     for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
         await ensure_artifact_consumer(js, pod_name, func_id, artifact_subject)
 
-    # 7. Per func_id: create metadata pull consumer (queue-group — shared across pods)
+    # 9. Per func_id: create metadata pull consumer (queue-group — shared across pods)
     for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
         await ensure_metadata_consumer(js, statefulset_name, func_id, metadata_subject)
 
-    # 8. Start fetch loops for BOTH streams — one artifact + one metadata task per func_id
-    #    Unified pull pattern: backpressure-aware, easy reconnect, consistent codebase
+    # 10. Start fetch loops for BOTH streams — one artifact + one metadata task per func_id
     await start_fetch_loops(js, pod_name, statefulset_name, func_subjects)
 
     _ready = True

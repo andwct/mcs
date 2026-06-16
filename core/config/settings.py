@@ -22,7 +22,13 @@ class Settings(BaseSettings):
     REDIS_SENTINEL_PORT: int = 26379
     REDIS_SENTINEL_MASTER_NAME: str = "mymaster"
     REDIS_PASSWORD: str = ""
-    REDIS_MODEL_LIST_KEY: str = "mcs:model_list"
+    # Redis hash keys for meta lists.
+    # model_list uses per-function hash: mcs:model_list:{function_id}
+    # Others use a shared hash: key=field(function_id), value=JSON content
+    REDIS_MODEL_LIST_KEY_PREFIX: str = "mcs:model_list"
+    REDIS_KERNEL_LIST_KEY: str = "mcs:kernel_list"
+    REDIS_PACKAGE_LIST_KEY: str = "mcs:package_list"
+    REDIS_PAT_LIST_KEY: str = "mcs:pat_list"
 
     # ── ConfigMap ─────────────────────────────────────────────────────────
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"

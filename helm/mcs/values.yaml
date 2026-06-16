@@ -203,7 +203,10 @@ configMap:
       REDIS_SENTINEL_HOSTS=mcs-redis-sentinel-headless.mlop-site-model-center.svc.cluster.local
       REDIS_SENTINEL_PORT=26379
       REDIS_SENTINEL_MASTER_NAME=mymaster
-      REDIS_MODEL_LIST_KEY=mcs:model_list
+      REDIS_MODEL_LIST_KEY_PREFIX=mcs:model_list
+      REDIS_KERNEL_LIST_KEY=mcs:kernel_list
+      REDIS_PACKAGE_LIST_KEY=mcs:package_list
+      REDIS_PAT_LIST_KEY=mcs:pat_list
       JANITOR_INTERVAL_SECONDS=300
       JANITOR_HIGH_WATERMARK=0.90
       JANITOR_LOW_WATERMARK=0.75
