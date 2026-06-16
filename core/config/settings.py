@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     # meta cache fetches are lightweight JSON responses.
     META_CACHE_REQUEST_TIMEOUT_SECONDS: int = 30
 
-    # ── Auth ──────────────────────────────────────────────────────────────
-    MODEL_CENTER_ACCOUNT: str = ""
-    MODEL_CENTER_PASSWORD: str = ""
-
     # ── App ───────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
     STAGE_NAME: str = "SIT"

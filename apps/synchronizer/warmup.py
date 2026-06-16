@@ -12,7 +12,6 @@ Redis must be fully populated before consumers start processing NATS messages.
 """
 import logging
 from core.models.product import ProductConfig
-from core.config.settings import get_settings
 from core.http.meta_client import (
     fetch_model_list,
     fetch_kernel_list,
@@ -32,16 +31,19 @@ async def warm_up_redis(products: list[ProductConfig]) -> None:
     For each (product, function_id), fetch all four meta types from siteMC
     and write to Redis — only if not already populated.
 
+    Credentials come from productConfig (MODEL_CENTER_ACCOUNT/PASSWORD)
+    — product-level identity, not deployment-level.
+
     Called in lifespan.py BEFORE NATS consumers are created.
     Raises RuntimeError on any failure → pod restarts.
     """
-    settings = get_settings()
-    account = settings.MODEL_CENTER_ACCOUNT
-    password = settings.MODEL_CENTER_PASSWORD
-
     for product in products:
+        # Credentials are per-product
+        account = product.MODEL_CENTER_ACCOUNT
+        password = product.MODEL_CENTER_PASSWORD
+        product_id = product.PRODUCT_ID
+
         for func_id in product.FUNCTION_LIST:
-            product_id = product.PRODUCT_ID
             await _warm_up_model_list(func_id, product_id, account, password)
             await _warm_up_kernel_list(func_id, product_id, account, password)
             await _warm_up_package_list(func_id, product_id, account, password)

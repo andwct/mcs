@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from nats.aio.msg import Msg
 from core.models.nats_messages import ArtifactMessage, MetadataMessage, ArtifactType, MetaType
-from core.redis.model_list import set_model, model_list_exists
+from core.redis.model_list import set_model
 from core.redis.kernel_list import set_kernel_list
 from core.redis.package_list import set_package_list
 from core.redis.pat_list import set_pat_list
@@ -13,6 +13,7 @@ from core.http.meta_client import (
     fetch_package_list,
     fetch_pat_list,
 )
+from apps.synchronizer.state import get_product_by_func_id, get_product_by_id
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -44,14 +45,25 @@ async def handle_artifact_message(msg: Msg) -> None:
 
     async with _artifact_locks[lock_key]:
         try:
-            await _fetch_and_store(func_id, version)
+            # Credentials from productConfig — product-level identity
+            product = get_product_by_func_id(func_id)
+            await _fetch_and_store(
+                func_id, version,
+                product.MODEL_CENTER_ACCOUNT,
+                product.MODEL_CENTER_PASSWORD,
+            )
             await msg.ack()
         except Exception as e:
             logger.error(f"Artifact fetch failed func_id={func_id} version={version}: {e}")
             await msg.nak()
 
 
-async def _fetch_and_store(func_id: str, version: str) -> None:
+async def _fetch_and_store(
+    func_id: str,
+    version: str,
+    account: str,
+    password: str,
+) -> None:
     from core.http.artifact_client import fetch_model_file
     settings = get_settings()
 
@@ -63,7 +75,7 @@ async def _fetch_and_store(func_id: str, version: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".tmp")
     try:
-        await fetch_model_file(func_id, version, tmp)
+        await fetch_model_file(func_id, version, tmp, account, password)
         tmp.rename(dest)
         logger.info(f"Artifact stored: {dest}")
     except Exception:
@@ -85,10 +97,16 @@ async def handle_metadata_message(msg: Msg) -> None:
     func_id = payload.function_id
     product_id = payload.product_id
 
-    # Use global credentials — same across all products
-    settings = get_settings()
-    account = settings.MODEL_CENTER_ACCOUNT
-    password = settings.MODEL_CENTER_PASSWORD
+    # Credentials from productConfig — product-level identity
+    try:
+        product = get_product_by_id(product_id)
+    except KeyError as e:
+        logger.error(f"Unknown product_id={product_id}: {e}")
+        await msg.ack()
+        return
+
+    account = product.MODEL_CENTER_ACCOUNT
+    password = product.MODEL_CENTER_PASSWORD
 
     dispatch = {
         MetaType.MODEL_LIST:   _handle_model_list,
@@ -121,19 +139,12 @@ async def _handle_model_list(
     password: str,
     payload: MetadataMessage,
 ) -> None:
-    """
-    Fetch full model list for function_id, extract the updated model record
-    from the 'online' list (identified by payload.model_id), and update
-    just that one field in Redis. Fine-grained O(1) update.
-    """
     model_id = payload.model_id
     if not model_id:
         logger.error(f"model_id missing in model_list update for func_id={func_id}")
         return
 
     content = await fetch_model_list(func_id, product_id, account, password)
-
-    # content = {"online": [...], "shadow": [...], "headers": {...}}
     online = content.get("online", [])
     record = _extract_model_record(online, model_id)
     if record is None:

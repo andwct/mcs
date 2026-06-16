@@ -6,10 +6,19 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def fetch_model_file(func_id: str, version: str, dest: Path) -> None:
+async def fetch_model_file(
+    func_id: str,
+    version: str,
+    dest: Path,
+    account: str,
+    password: str,
+) -> None:
     """
     Stream model file from siteMC ArtifactCacheService into dest (temp file).
     Caller is responsible for atomic rename after success.
+
+    Credentials come from productConfig (MODEL_CENTER_ACCOUNT/PASSWORD)
+    — product-level identity, not deployment-level.
     """
     settings = get_settings()
     url = (
@@ -19,7 +28,7 @@ async def fetch_model_file(func_id: str, version: str, dest: Path) -> None:
     logger.info(f"Fetching artifact: {url}")
 
     async with httpx.AsyncClient(
-        auth=(settings.MODEL_CENTER_ACCOUNT, settings.MODEL_CENTER_PASSWORD),
+        auth=(account, password),
         timeout=settings.NATS_ACK_WAIT_ARTIFACT_SECONDS,
     ) as client:
         async with client.stream("GET", url) as response:
