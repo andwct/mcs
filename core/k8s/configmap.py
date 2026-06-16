@@ -30,11 +30,53 @@ def load_one_properties() -> dict[str, str]:
     return props
 
 
+def _load_vault_password(product: ProductConfig) -> str:
+    """
+    Read MODEL_CENTER_PASSWORD from the Vault-mounted secret file.
+
+    ricoberger VSO operator mounts each Vault key as a separate file.
+    File path: /root/{last_segment_of_VAULT_PATH}/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD
+    e.g. MODEL_CENTER_VAULT_PATH = "kv-mlp/mlop-secret/mcs"
+         PRODUCT_NAME = "ABC"
+         → /root/mcs-secret/ABC_MODEL_CENTER_PASSWORD
+
+    Raises RuntimeError if file is missing or empty — password is required
+    for siteMC Basic Auth.
+    """
+    vault_dir = Path("/root") / product.MODEL_CENTER_VAULT_PATH.split("/")[-1]
+    secret_file = vault_dir / f"{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD"
+
+    if not secret_file.exists():
+        raise RuntimeError(
+            f"Vault secret file not found for product '{product.PRODUCT_NAME}': "
+            f"{secret_file}. Ensure '{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD' "
+            f"exists at Vault path '{product.MODEL_CENTER_VAULT_PATH}' and is "
+            f"mounted via VaultSecret at {vault_dir}."
+        )
+
+    password = secret_file.read_text().strip()
+    if not password:
+        raise RuntimeError(
+            f"Vault secret file is empty for product '{product.PRODUCT_NAME}': "
+            f"{secret_file}"
+        )
+
+    logger.info(
+        f"Loaded MODEL_CENTER_PASSWORD from Vault for "
+        f"product '{product.PRODUCT_NAME}': {secret_file}"
+    )
+    return password
+
+
 def load_product_configs() -> list[ProductConfig]:
     """
     Scan ConfigMap mount for product JSON files and return ProductConfig list.
     All *.json files are treated as product configs (one.properties is not JSON
     so it is naturally excluded).
+
+    If ENABLE_VAULT=true, MODEL_CENTER_PASSWORD is populated from the
+    Vault-mounted secret file at /root/{VAULT_PATH_LAST_SEGMENT}/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD.
+    Raises RuntimeError if the secret file is missing or empty.
     """
     settings = get_settings()
     mount = Path(settings.CONFIGMAP_MOUNT_PATH)
@@ -50,13 +92,19 @@ def load_product_configs() -> list[ProductConfig]:
         try:
             data = json.loads(f.read_text())
             product = ProductConfig.model_validate(data)
+
+            # Vault replacement — same pattern as EdgeService
+            if product.ENABLE_VAULT:
+                product.MODEL_CENTER_PASSWORD = _load_vault_password(product)
+
             products.append(product)
             logger.info(
                 f"Loaded product: {product.PRODUCT_ID} "
-                f"functions={product.FUNCTION_LIST}"
+                f"functions={product.FUNCTION_LIST} "
+                f"vault={'enabled' if product.ENABLE_VAULT else 'disabled'}"
             )
         except Exception as e:
-            logger.error(f"Failed to parse {f.name}: {e}")
+            logger.error(f"Failed to parse or load product {f.name}: {e}")
             raise
 
     return products
