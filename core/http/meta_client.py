@@ -1,17 +1,22 @@
 import logging
+from uuid import uuid4
 import httpx
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _FIXED_PARAMS = {
-    "inline_": "true",
+    "inline": "true",        # no trailing underscore — matches EdgeService
     "source": "cache_service",
 }
 
 
-def _auth(account: str, password: str) -> tuple[str, str]:
-    return (account, password)
+def _headers() -> dict:
+    """
+    Request headers aligned with EdgeService.
+    X-dummy-UID: unique request ID per call — required by siteMC API gateway.
+    """
+    return {"X-dummy-UID": str(uuid4())}
 
 
 def _params(function_id: str, product_id: str) -> dict:
@@ -22,7 +27,7 @@ def _params(function_id: str, product_id: str) -> dict:
     }
 
 
-async def _get_content(
+async def _get(
     url: str,
     function_id: str,
     product_id: str,
@@ -31,16 +36,20 @@ async def _get_content(
     stream: bool = False,
 ) -> dict | list:
     """
-    Generic GET helper — fetches from siteMC meta cache service,
-    extracts and returns response["content"].
+    Generic GET helper — fetches from siteMC meta cache service.
+
+    Response body IS the content directly (no wrapper envelope).
+    Aligned with EdgeService which uses response.content directly.
+
     stream=True for streaming responses (kernel_list, package_list).
     """
     settings = get_settings()
     timeout = httpx.Timeout(settings.META_CACHE_REQUEST_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(
-        auth=_auth(account, password),
+        auth=(account, password),
         timeout=timeout,
+        headers=_headers(),
     ) as client:
         if stream:
             chunks = []
@@ -51,18 +60,13 @@ async def _get_content(
                 async for chunk in response.aiter_bytes(chunk_size=65536):
                     chunks.append(chunk)
             import json
-            data = json.loads(b"".join(chunks))
+            return json.loads(b"".join(chunks))
         else:
             response = await client.get(
                 url, params=_params(function_id, product_id)
             )
             response.raise_for_status()
-            data = response.json()
-
-    content = data.get("content")
-    if content is None:
-        raise ValueError(f"No 'content' field in response from {url}")
-    return content
+            return response.json()
 
 
 async def fetch_model_list(
@@ -73,12 +77,13 @@ async def fetch_model_list(
 ) -> dict:
     """
     GET /meta-cache/model_list/{function_id}
-    Returns content: raw model list payload (dict keyed by modelId or list).
+    Returns raw model list payload directly:
+    {"online": [...], "shadow": [...], "headers": {...}}
     """
     settings = get_settings()
     url = f"{settings.SITE_META_CACHE_SERVICE_URL}/meta-cache/model_list/{function_id}"
     logger.info(f"Fetching model_list: function_id={function_id}")
-    return await _get_content(url, function_id, product_id, account, password)
+    return await _get(url, function_id, product_id, account, password)
 
 
 async def fetch_kernel_list(
@@ -89,7 +94,8 @@ async def fetch_kernel_list(
 ) -> dict:
     """
     GET /meta-cache/DATA_EXPORT/kernel-version/{function_id}
-    Returns content: {"kernelId": "...", "kernelVersion": "..."}
+    Returns raw kernel record directly:
+    {"kernelId": "...", "kernelVersion": "..."}
     Response is streaming.
     """
     settings = get_settings()
@@ -98,7 +104,7 @@ async def fetch_kernel_list(
         f"/meta-cache/DATA_EXPORT/kernel-version/{function_id}"
     )
     logger.info(f"Fetching kernel_list: function_id={function_id}")
-    return await _get_content(url, function_id, product_id, account, password, stream=True)
+    return await _get(url, function_id, product_id, account, password, stream=True)
 
 
 async def fetch_package_list(
@@ -109,7 +115,8 @@ async def fetch_package_list(
 ) -> dict:
     """
     GET /meta-cache/DATA_EXPORT/package-version/{function_id}
-    Returns content: {"packageId": "...", "packageVersion": "..."}
+    Returns raw package record directly:
+    {"packageId": "...", "packageVersion": "..."}
     Response is streaming.
     """
     settings = get_settings()
@@ -118,7 +125,7 @@ async def fetch_package_list(
         f"/meta-cache/DATA_EXPORT/package-version/{function_id}"
     )
     logger.info(f"Fetching package_list: function_id={function_id}")
-    return await _get_content(url, function_id, product_id, account, password, stream=True)
+    return await _get(url, function_id, product_id, account, password, stream=True)
 
 
 async def fetch_pat_list(
@@ -129,9 +136,9 @@ async def fetch_pat_list(
 ) -> list:
     """
     GET /meta-cache/pats/{function_id}
-    Returns content: ["1", "2", "3"] (list of PAT strings)
+    Returns raw PAT list directly: ["1", "2", "3"]
     """
     settings = get_settings()
     url = f"{settings.SITE_META_CACHE_SERVICE_URL}/meta-cache/pats/{function_id}"
     logger.info(f"Fetching pat_list: function_id={function_id}")
-    return await _get_content(url, function_id, product_id, account, password)
+    return await _get(url, function_id, product_id, account, password)
