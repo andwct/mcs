@@ -35,23 +35,22 @@ def _load_vault_password(product: ProductConfig) -> str:
     Read MODEL_CENTER_PASSWORD from the Vault-mounted secret file.
 
     ricoberger VSO operator mounts each Vault key as a separate file
-    under SECRET_MOUNT_PATH (/root/mcs-secret by default).
+    under /root/mcs-secret/ (defined in Helm chart volumeMounts).
 
-    File: {SECRET_MOUNT_PATH}/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD
+    File: /root/mcs-secret/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD
     e.g. /root/mcs-secret/ABC_MODEL_CENTER_PASSWORD
 
     Raises RuntimeError if file is missing or empty — password is required
     for siteMC Basic Auth.
     """
-    settings = get_settings()
-    secret_file = Path(settings.SECRET_MOUNT_PATH) / f"{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD"
+    secret_file = Path("/root/mcs-secret") / f"{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD"
 
     if not secret_file.exists():
         raise RuntimeError(
             f"Vault secret file not found for product '{product.PRODUCT_NAME}': "
             f"{secret_file}. Ensure '{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD' "
             f"exists at Vault path '{product.MODEL_CENTER_VAULT_PATH}' and is "
-            f"mounted via VaultSecret at {settings.SECRET_MOUNT_PATH}."
+            f"mounted via VaultSecret at /root/mcs-secret."
         )
 
     password = secret_file.read_text().strip()
