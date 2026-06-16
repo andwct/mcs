@@ -34,23 +34,28 @@ def _load_vault_password(product: ProductConfig) -> str:
     """
     Read MODEL_CENTER_PASSWORD from the Vault-mounted secret file.
 
-    ricoberger VSO operator mounts each Vault key as a separate file
-    under /root/mcs-secret/ (defined in Helm chart volumeMounts).
+    ricoberger VSO operator mounts each Vault key as a separate file.
+    The mount directory is derived from NATS_CREDS_FILE parent — both
+    nats.creds and {PRODUCT_NAME}_MODEL_CENTER_PASSWORD are mounted
+    from the same Vault secret path into the same directory.
 
-    File: /root/mcs-secret/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD
-    e.g. /root/mcs-secret/ABC_MODEL_CENTER_PASSWORD
+    File: {NATS_CREDS_FILE parent}/{PRODUCT_NAME}_MODEL_CENTER_PASSWORD
+    e.g. NATS_CREDS_FILE=/root/mcs-secret/nats.creds
+         → /root/mcs-secret/ABC_MODEL_CENTER_PASSWORD
 
     Raises RuntimeError if file is missing or empty — password is required
     for siteMC Basic Auth.
     """
-    secret_file = Path("/root/mcs-secret") / f"{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD"
+    settings = get_settings()
+    secret_dir = Path(settings.NATS_CREDS_FILE).parent
+    secret_file = secret_dir / f"{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD"
 
     if not secret_file.exists():
         raise RuntimeError(
             f"Vault secret file not found for product '{product.PRODUCT_NAME}': "
             f"{secret_file}. Ensure '{product.PRODUCT_NAME}_MODEL_CENTER_PASSWORD' "
             f"exists at Vault path '{product.MODEL_CENTER_VAULT_PATH}' and is "
-            f"mounted via VaultSecret at /root/mcs-secret."
+            f"mounted via VaultSecret at {secret_dir}."
         )
 
     password = secret_file.read_text().strip()
