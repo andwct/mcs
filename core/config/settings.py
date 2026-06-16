@@ -30,7 +30,10 @@ class Settings(BaseSettings):
     REDIS_PACKAGE_LIST_KEY: str = "mcs:package_list"
     REDIS_PAT_LIST_KEY: str = "mcs:pat_list"
 
-    # ── ConfigMap ─────────────────────────────────────────────────────────
+    # ── Vault / Secrets ───────────────────────────────────────────────────
+    # Path where ricoberger VSO operator mounts Vault secret files.
+    # Each Vault key becomes a separate file under this directory.
+    SECRET_MOUNT_PATH: str = "/root/mcs-secret"
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
 
     # ── Storage ───────────────────────────────────────────────────────────
