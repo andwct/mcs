@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from pathlib import Path
 from nats.aio.msg import Msg
@@ -18,7 +17,7 @@ from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-_artifact_locks: dict[str, asyncio.Lock] = {}
+
 
 
 # ── Artifact handler ────────────────────────────────────────────────────────
@@ -31,57 +30,132 @@ async def handle_artifact_message(msg: Msg) -> None:
         await msg.ack()
         return
 
-    if payload.artifact_type != ArtifactType.MODEL:
-        logger.debug(f"Ignoring artifact_type={payload.artifact_type}")
+    func_id = payload.function_id
+    product_id = payload.product_id
+    artifact_type = payload.artifact_type
+    version = payload.deployed_version
+
+    # Credentials from productConfig — product-level identity
+    try:
+        product = get_product_by_func_id(func_id)
+    except KeyError as e:
+        logger.error(f"Unknown function_id={func_id}: {e}")
         await msg.ack()
         return
 
-    func_id = payload.function_id
-    version = payload.deployed_version
-    lock_key = f"{func_id}:{version}"
+    account = product.MODEL_CENTER_ACCOUNT
+    password = product.MODEL_CENTER_PASSWORD
 
-    if lock_key not in _artifact_locks:
-        _artifact_locks[lock_key] = asyncio.Lock()
-
-    async with _artifact_locks[lock_key]:
-        try:
-            # Credentials from productConfig — product-level identity
-            product = get_product_by_func_id(func_id)
-            await _fetch_and_store(
-                func_id, version,
-                product.MODEL_CENTER_ACCOUNT,
-                product.MODEL_CENTER_PASSWORD,
-            )
-            await msg.ack()
-        except Exception as e:
-            logger.error(f"Artifact fetch failed func_id={func_id} version={version}: {e}")
-            await msg.nak()
+    try:
+        await _handle_artifact(
+            func_id, product_id, artifact_type, version, account, password
+        )
+        await msg.ack()
+    except Exception as e:
+        logger.error(
+            f"Artifact download failed artifact_type={artifact_type} "
+            f"func_id={func_id} version={version}: {e}"
+        )
+        await msg.nak()
 
 
-async def _fetch_and_store(
+async def _handle_artifact(
     func_id: str,
+    product_id: str,
+    artifact_type: ArtifactType,
     version: str,
     account: str,
     password: str,
 ) -> None:
-    from core.http.artifact_client import fetch_model_file
+    """
+    Route to correct downloader based on artifact_type.
+    Uses atomic write pattern (tmp file → rename) to prevent partial writes
+    being served by mcs-serving.
+    """
+    from core.http.artifact_downloader import (
+        download_model,
+        download_kernel,
+        download_package,
+    )
+    from core.redis.model_list import get_model_list
+    from core.redis.kernel_list import get_kernel_list
+    from core.redis.package_list import get_package_list
     settings = get_settings()
 
-    dest = Path(settings.STORAGE_PATH) / func_id / version / "model.bin"
-    if dest.exists():
-        logger.info(f"Artifact already cached: {dest} — skipping")
-        return
+    if artifact_type == ArtifactType.MODEL:
+        # Get model_id and version from Redis model_list
+        model_map = await get_model_list(func_id)
+        if not model_map:
+            raise RuntimeError(f"model_list not in Redis for func_id={func_id} — warm-up may have failed")
+        # Find the model record matching this version
+        record = next(
+            (r for r in model_map.values() if r.get("version") == version),
+            None,
+        )
+        if not record:
+            raise RuntimeError(f"No model found with version={version} for func_id={func_id}")
+        model_id = record["modelId"]
+        dest_dir = Path(settings.STORAGE_PATH) / func_id / "model" / model_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "MODEL_FILE.bin"
+        if dest.exists():
+            logger.info(f"Model already cached: {dest} — skipping")
+            return
+        tmp = dest.with_suffix(".tmp")
+        try:
+            await download_model(func_id, product_id, model_id, version, account, password, tmp)
+            tmp.rename(dest)
+            logger.info(f"Model artifact stored: {dest}")
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
-    try:
-        await fetch_model_file(func_id, version, tmp, account, password)
-        tmp.rename(dest)
-        logger.info(f"Artifact stored: {dest}")
-    except Exception:
-        if tmp.exists():
-            tmp.unlink()
-        raise
+    elif artifact_type == ArtifactType.KERNEL:
+        kernel = await get_kernel_list(func_id)
+        if not kernel:
+            raise RuntimeError(f"kernel_list not in Redis for func_id={func_id}")
+        kernel_id = kernel.get("kernelId")
+        kernel_version = kernel.get("kernelVersion")
+        dest_dir = Path(settings.STORAGE_PATH) / func_id / "kernel" / kernel_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "MODEL_FILE.bin"
+        if dest.exists():
+            logger.info(f"Kernel already cached: {dest} — skipping")
+            return
+        tmp = dest.with_suffix(".tmp")
+        try:
+            await download_kernel(func_id, product_id, kernel_id, kernel_version, account, password, tmp)
+            tmp.rename(dest)
+            logger.info(f"Kernel artifact stored: {dest}")
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+
+    elif artifact_type == ArtifactType.PACKAGE:
+        package = await get_package_list(func_id)
+        if not package:
+            raise RuntimeError(f"package_list not in Redis for func_id={func_id}")
+        package_version = package.get("packageVersion")
+        dest_dir = Path(settings.STORAGE_PATH) / func_id / "package"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "MODEL_FILE.bin"
+        if dest.exists():
+            logger.info(f"Package already cached: {dest} — skipping")
+            return
+        tmp = dest.with_suffix(".tmp")
+        try:
+            await download_package(func_id, product_id, package_version, account, password, tmp)
+            tmp.rename(dest)
+            logger.info(f"Package artifact stored: {dest}")
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+
+    else:
+        logger.warning(f"Unknown artifact_type={artifact_type} — ignoring")
 
 
 # ── Metadata handler ────────────────────────────────────────────────────────

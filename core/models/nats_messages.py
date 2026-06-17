@@ -21,6 +21,7 @@ class MetaType(str, Enum):
 class ArtifactMessage(BaseModel):
     """MLOP-MCS-ARTIFACT stream message schema."""
     function_id: str
+    product_id: str
     artifact_type: ArtifactType
     deployed_version: str
 
