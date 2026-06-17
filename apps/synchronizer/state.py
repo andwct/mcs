@@ -38,6 +38,9 @@ def get_product_by_id(product_id: str) -> ProductConfig:
 def get_all_products() -> list:
     """Return all loaded ProductConfig objects — used by config.PRODUCTS adapter."""
     return list(_product_map.values())
+
+
+def get_product_by_func_id(function_id: str) -> ProductConfig:
     product = _func_product_map.get(function_id)
     if product is None:
         raise KeyError(f"Product not found for function_id={function_id}")
