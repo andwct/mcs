@@ -111,13 +111,90 @@ Step 3: Download artifact via RSA+AES-CBC tunnel
 
 ---
 
-## Copied Files from EdgeService
+## Pasting EdgeService Files — Exact Changes Required
 
-| File | Responsibilities |
-|---|---|
-| `core/http/site_authorization.py` | `get_one_time_access_token()`, `get_artifact_key()` |
-| `core/http/site_artifact_service.py` | RSA key generation, 3-step tunnel, `decrypt_rsa_aes_tunnel()` call |
-| `core/security.py` | `decrypt_rsa_aes_tunnel()` (model), `decrypt_object()` (kernel/package), partial AES-GCM encrypt/decrypt (Phase 2) |
+When pasting each file from EdgeService, make these minimal import changes:
+
+### `core/http/site_authorization.py`
+```python
+# REMOVE:
+from src.config import config
+from src.utils.reqeust import RetrySession
+
+# ADD:
+from core.config.settings import get_settings
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# IN __init__, change:
+self.url = config.SITE_AUTHORIZATION_URL
+# TO:
+self.url = get_settings().SITE_AUTHORIZATION_URL
+
+# IN __init__, change:
+self.retry_session = RetrySession()
+# TO:
+self.retry_session = self._make_session()
+
+# ADD this method to the class:
+def _make_session(self) -> requests.Session:
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.3,
+                  status_forcelist=(500, 502, 503, 504))
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
+```
+
+### `core/http/site_artifact_service.py`
+```python
+# REMOVE:
+from src.config import config
+from src.utils.reqeust import RetrySessionAsync
+from src.models.kernel import KernelModel
+from src.models.pacakge import PackageModel
+from src.service.site_authorization import SiteAuthorizationService
+from src.utils.logger import default_log_config
+
+# ADD:
+from core.config.settings import get_settings
+from core.models.artifact_models import KernelModel, PackageModel
+from core.http.site_authorization import SiteAuthorizationService
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# IN __init__, change:
+self.url = config.SITE_ARTIFACT_SERVICE_URL
+# TO:
+self.url = get_settings().SITE_ARTIFACT_SERVICE_URL
+
+# IN __init__, change:
+self.retry_session = RetrySessionAsync()
+# TO:
+self.retry_session = self._make_session()
+
+# ADD this method to the class:
+def _make_session(self) -> requests.Session:
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.3,
+                  status_forcelist=(500, 502, 503, 504))
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
+```
+
+### `core/security.py`
+```python
+# REMOVE:
+from Crypto.Random import get_random_bytes
+from src.service.site_authorization import SiteAuthorizationService
+
+# ADD:
+from Cryptodome.Random import get_random_bytes
+from core.http.site_authorization import SiteAuthorizationService
+```
 
 ---
 
