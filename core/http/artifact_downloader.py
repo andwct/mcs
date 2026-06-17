@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def _get_random_bytes(n: int) -> bytes:
     """Generate n cryptographically random bytes."""
-    from Crypto.Random import get_random_bytes
+    from Cryptodome.Random import get_random_bytes
     return get_random_bytes(n)
 
 

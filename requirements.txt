@@ -25,9 +25,8 @@ kubernetes>=29.0.0
 kubernetes_asyncio==33.3.0
 
 # Crypto & security
-pycryptodomex==3.16    # Cryptodome.* imports (security.py, site_artifact_service.py)
-pycryptodome==3.16     # Crypto.* imports (Crypto.Random in security.py)
-cryptography==43.0.0
+pycryptodomex==3.12    # Cryptodome.* imports (security.py, site_artifact_service.py)
+cryptography==43.0.1
 blake3
 
 # Async support
