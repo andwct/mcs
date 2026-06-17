@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
 
     # ── Storage ───────────────────────────────────────────────────────────
-    STORAGE_PATH: str = "/mnt/models"
+    STORAGE_PATH: str = "/mnt/mcs"
 
     # ── siteMC HTTP ───────────────────────────────────────────────────────
     SITE_AUTHORIZATION_URL: str = ""
