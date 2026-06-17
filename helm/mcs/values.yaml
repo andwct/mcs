@@ -191,11 +191,13 @@ configMap:
       SITE_AUTHORIZATION_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
       SITE_ARTIFACT_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
       SITE_META_CACHE_SERVICE_URL=http://mlop-site-api-gateway.mlop-model-center-test.ftest.dummy.com
+      META_CACHE_REQUEST_TIMEOUT_SECONDS=30
       APP_NAME=mcs
       STAGE_NAME=SIT
       CONFIGMAP_MOUNT_PATH=/etc/config
       NATS_URL=nats://mlop-nats-new.mlop-site-model-center.svc.cluster.local:4222
       NATS_CREDS_FILE=/root/mcs-secret/nats.creds
+      SECRET_MOUNT_PATH=/root/mcs-secret
       NATS_ARTIFACT_STREAM=MLOP-MCS-ARTIFACT
       NATS_METADATA_STREAM=MLOP-MCS-METADATA
       NATS_ACK_WAIT_ARTIFACT_SECONDS=300
@@ -203,7 +205,10 @@ configMap:
       REDIS_SENTINEL_HOSTS=mcs-redis-sentinel-headless.mlop-site-model-center.svc.cluster.local
       REDIS_SENTINEL_PORT=26379
       REDIS_SENTINEL_MASTER_NAME=mymaster
-      REDIS_MODEL_LIST_KEY=mcs:model_list
+      REDIS_MODEL_LIST_KEY_PREFIX=mcs:model_list
+      REDIS_KERNEL_LIST_KEY=mcs:kernel_list
+      REDIS_PACKAGE_LIST_KEY=mcs:package_list
+      REDIS_PAT_LIST_KEY=mcs:pat_list
       JANITOR_INTERVAL_SECONDS=300
       JANITOR_HIGH_WATERMARK=0.90
       JANITOR_LOW_WATERMARK=0.75

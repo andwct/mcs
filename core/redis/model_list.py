@@ -7,35 +7,75 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def get_model_list(function_id: str) -> dict | None:
-    """HGET mcs:model_list <function_id> → parsed dict or None."""
+def _model_list_key(function_id: str) -> str:
+    """
+    Per-function hash key: mcs:model_list:{function_id}
+    Each field = modelId, value = JSON model record.
+    Fine-grained — updating one model touches only one hash field.
+    """
     settings = get_settings()
+    return f"{settings.REDIS_MODEL_LIST_KEY_PREFIX}:{function_id}"
+
+
+async def get_model_list(function_id: str) -> dict | None:
+    """
+    HGETALL mcs:model_list:{function_id}
+    Returns {modelId: record_dict} or None if not found.
+    """
     client = await get_client()
-    raw = await client.hget(settings.REDIS_MODEL_LIST_KEY, function_id)
-    if raw is None:
+    raw = await client.hgetall(_model_list_key(function_id))
+    if not raw:
         return None
-    return json.loads(raw)
+    return {model_id: json.loads(record) for model_id, record in raw.items()}
+
+
+async def set_model(function_id: str, model_id: str, record: dict) -> None:
+    """
+    HSET mcs:model_list:{function_id} <model_id> <json>
+    Updates a single model record — O(1), does not affect other models.
+    Used for both initial warm-up (per model) and incremental updates.
+    """
+    client = await get_client()
+    await client.hset(
+        _model_list_key(function_id),
+        model_id,
+        json.dumps(record),
+    )
+    logger.info(f"Redis model updated: function_id={function_id} model_id={model_id}")
 
 
 async def set_model_list(function_id: str, model_map: dict) -> None:
-    """HSET mcs:model_list <function_id> <json>"""
-    settings = get_settings()
+    """
+    Bulk write: HSET mcs:model_list:{function_id} for all models.
+    Used during initial warm-up to populate all models at once.
+    model_map: {modelId: record_dict}
+    """
+    if not model_map:
+        return
     client = await get_client()
-    await client.hset(
-        settings.REDIS_MODEL_LIST_KEY,
-        function_id,
-        json.dumps(model_map),
+    mapping = {model_id: json.dumps(record) for model_id, record in model_map.items()}
+    await client.hset(_model_list_key(function_id), mapping=mapping)
+    logger.info(
+        f"Redis model_list bulk updated: function_id={function_id} "
+        f"count={len(model_map)}"
     )
-    logger.info(f"Redis model_list updated: function_id={function_id} count={len(model_map)}")
+
+
+async def model_list_exists(function_id: str) -> bool:
+    """Check if model_list is already populated for this function_id."""
+    client = await get_client()
+    return await client.exists(_model_list_key(function_id)) > 0
 
 
 async def get_all_active_model_ids() -> set[str]:
     """Return all modelIds across all function_ids — used by janitor."""
     settings = get_settings()
     client = await get_client()
-    all_fields = await client.hgetall(settings.REDIS_MODEL_LIST_KEY)
+    # Scan for all mcs:model_list:* keys
     model_ids: set[str] = set()
-    for value in all_fields.values():
-        model_map = json.loads(value)
-        model_ids.update(model_map.keys())
+    async for key in client.scan_iter(
+        f"{settings.REDIS_MODEL_LIST_KEY_PREFIX}:*"
+    ):
+        fields = await client.hkeys(key)
+        model_ids.update(fields)
     return model_ids

@@ -22,9 +22,19 @@ class Settings(BaseSettings):
     REDIS_SENTINEL_PORT: int = 26379
     REDIS_SENTINEL_MASTER_NAME: str = "mymaster"
     REDIS_PASSWORD: str = ""
-    REDIS_MODEL_LIST_KEY: str = "mcs:model_list"
+    # Redis hash keys for meta lists.
+    # model_list uses per-function hash: mcs:model_list:{function_id}
+    # Others use a shared hash: key=field(function_id), value=JSON content
+    REDIS_MODEL_LIST_KEY_PREFIX: str = "mcs:model_list"
+    REDIS_KERNEL_LIST_KEY: str = "mcs:kernel_list"
+    REDIS_PACKAGE_LIST_KEY: str = "mcs:package_list"
+    REDIS_PAT_LIST_KEY: str = "mcs:pat_list"
 
-    # ── ConfigMap ─────────────────────────────────────────────────────────
+    # ── Vault / Secrets ───────────────────────────────────────────────────
+    # Path where ricoberger VSO operator mounts Vault secret files.
+    # Matches the mountPath defined in Helm chart volumeMounts.
+    SECRET_MOUNT_PATH: str = "/root/mcs-secret"
+
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
 
     # ── Storage ───────────────────────────────────────────────────────────
@@ -34,10 +44,9 @@ class Settings(BaseSettings):
     SITE_AUTHORIZATION_URL: str = ""
     SITE_ARTIFACT_SERVICE_URL: str = ""
     SITE_META_CACHE_SERVICE_URL: str = ""
-
-    # ── Auth ──────────────────────────────────────────────────────────────
-    MODEL_CENTER_ACCOUNT: str = ""
-    MODEL_CENTER_PASSWORD: str = ""
+    # Separate timeouts: artifact fetches can be slow (large model files),
+    # meta cache fetches are lightweight JSON responses.
+    META_CACHE_REQUEST_TIMEOUT_SECONDS: int = 30
 
     # ── App ───────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

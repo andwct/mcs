@@ -2,14 +2,26 @@ import asyncio
 import logging
 from pathlib import Path
 from nats.aio.msg import Msg
-from core.models.nats_messages import ArtifactMessage, MetadataMessage, ArtifactType
-from core.redis.model_list import set_model_list
+from core.models.nats_messages import ArtifactMessage, MetadataMessage, ArtifactType, MetaType
+from core.redis.model_list import set_model
+from core.redis.kernel_list import set_kernel_list
+from core.redis.package_list import set_package_list
+from core.redis.pat_list import set_pat_list
+from core.http.meta_client import (
+    fetch_model_list,
+    fetch_kernel_list,
+    fetch_package_list,
+    fetch_pat_list,
+)
+from apps.synchronizer.state import get_product_by_func_id, get_product_by_id
 from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _artifact_locks: dict[str, asyncio.Lock] = {}
 
+
+# ── Artifact handler ────────────────────────────────────────────────────────
 
 async def handle_artifact_message(msg: Msg) -> None:
     try:
@@ -33,14 +45,25 @@ async def handle_artifact_message(msg: Msg) -> None:
 
     async with _artifact_locks[lock_key]:
         try:
-            await _fetch_and_store(func_id, version)
+            # Credentials from productConfig — product-level identity
+            product = get_product_by_func_id(func_id)
+            await _fetch_and_store(
+                func_id, version,
+                product.MODEL_CENTER_ACCOUNT,
+                product.MODEL_CENTER_PASSWORD,
+            )
             await msg.ack()
         except Exception as e:
             logger.error(f"Artifact fetch failed func_id={func_id} version={version}: {e}")
             await msg.nak()
 
 
-async def _fetch_and_store(func_id: str, version: str) -> None:
+async def _fetch_and_store(
+    func_id: str,
+    version: str,
+    account: str,
+    password: str,
+) -> None:
     from core.http.artifact_client import fetch_model_file
     settings = get_settings()
 
@@ -52,7 +75,7 @@ async def _fetch_and_store(func_id: str, version: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".tmp")
     try:
-        await fetch_model_file(func_id, version, tmp)
+        await fetch_model_file(func_id, version, tmp, account, password)
         tmp.rename(dest)
         logger.info(f"Artifact stored: {dest}")
     except Exception:
@@ -60,6 +83,8 @@ async def _fetch_and_store(func_id: str, version: str) -> None:
             tmp.unlink()
         raise
 
+
+# ── Metadata handler ────────────────────────────────────────────────────────
 
 async def handle_metadata_message(msg: Msg) -> None:
     try:
@@ -69,18 +94,109 @@ async def handle_metadata_message(msg: Msg) -> None:
         await msg.ack()
         return
 
-    if payload.artifact_type != ArtifactType.MODEL_LIST:
-        logger.debug(f"Ignoring artifact_type={payload.artifact_type}")
+    func_id = payload.function_id
+    product_id = payload.product_id
+
+    # Credentials from productConfig — product-level identity
+    try:
+        product = get_product_by_id(product_id)
+    except KeyError as e:
+        logger.error(f"Unknown product_id={product_id}: {e}")
         await msg.ack()
         return
 
-    func_id = payload.function_id
-    model_map = {str(r.modelId): r.model_dump() for r in payload.online}
+    account = product.MODEL_CENTER_ACCOUNT
+    password = product.MODEL_CENTER_PASSWORD
+
+    dispatch = {
+        MetaType.MODEL_LIST:   _handle_model_list,
+        MetaType.KERNEL_LIST:  _handle_kernel_list,
+        MetaType.PACKAGE_LIST: _handle_package_list,
+        MetaType.PAT_LIST:     _handle_pat_list,
+    }
+
+    handler = dispatch.get(payload.meta_type)
+    if handler is None:
+        logger.warning(f"Unknown meta_type={payload.meta_type} — ignoring")
+        await msg.ack()
+        return
 
     try:
-        await set_model_list(func_id, model_map)
+        await handler(func_id, product_id, account, password, payload)
         await msg.ack()
-        logger.info(f"model_list updated in Redis: func_id={func_id} models={len(model_map)}")
     except Exception as e:
-        logger.error(f"Redis write failed func_id={func_id}: {e}")
+        logger.error(
+            f"Metadata handler failed meta_type={payload.meta_type} "
+            f"func_id={func_id}: {e}"
+        )
         await msg.nak()
+
+
+async def _handle_model_list(
+    func_id: str,
+    product_id: str,
+    account: str,
+    password: str,
+    payload: MetadataMessage,
+) -> None:
+    model_id = payload.model_id
+    if not model_id:
+        logger.error(f"model_id missing in model_list update for func_id={func_id}")
+        return
+
+    content = await fetch_model_list(func_id, product_id, account, password)
+    online = content.get("online", [])
+    record = _extract_model_record(online, model_id)
+    if record is None:
+        logger.warning(
+            f"model_id={model_id} not found in online list "
+            f"for func_id={func_id} — model may be in shadow or deleted"
+        )
+        return
+
+    await set_model(func_id, model_id, record)
+    logger.info(f"model_list updated: func_id={func_id} model_id={model_id}")
+
+
+async def _handle_kernel_list(
+    func_id: str,
+    product_id: str,
+    account: str,
+    password: str,
+    payload: MetadataMessage,
+) -> None:
+    content = await fetch_kernel_list(func_id, product_id, account, password)
+    await set_kernel_list(func_id, content)
+    logger.info(f"kernel_list updated: func_id={func_id}")
+
+
+async def _handle_package_list(
+    func_id: str,
+    product_id: str,
+    account: str,
+    password: str,
+    payload: MetadataMessage,
+) -> None:
+    content = await fetch_package_list(func_id, product_id, account, password)
+    await set_package_list(func_id, content)
+    logger.info(f"package_list updated: func_id={func_id}")
+
+
+async def _handle_pat_list(
+    func_id: str,
+    product_id: str,
+    account: str,
+    password: str,
+    payload: MetadataMessage,
+) -> None:
+    content = await fetch_pat_list(func_id, product_id, account, password)
+    await set_pat_list(func_id, content)
+    logger.info(f"pat_list updated: func_id={func_id}")
+
+
+def _extract_model_record(online: list, model_id: str) -> dict | None:
+    """Find a model record by modelId from the 'online' list."""
+    for record in online:
+        if str(record.get("modelId", "")) == model_id:
+            return record
+    return None
