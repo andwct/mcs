@@ -77,24 +77,17 @@ async def _handle_artifact(
         download_kernel,
         download_package,
     )
-    from core.redis.model_list import get_model_list
     from core.redis.kernel_list import get_kernel_list
     from core.redis.package_list import get_package_list
     settings = get_settings()
 
     if artifact_type == ArtifactType.MODEL:
-        # Get model_id and version from Redis model_list
-        model_map = await get_model_list(func_id)
-        if not model_map:
-            raise RuntimeError(f"model_list not in Redis for func_id={func_id} — warm-up may have failed")
-        # Find the model record matching this version
-        record = next(
-            (r for r in model_map.values() if r.get("version") == version),
-            None,
-        )
-        if not record:
-            raise RuntimeError(f"No model found with version={version} for func_id={func_id}")
-        model_id = record["modelId"]
+        model_id = payload.model_id
+        if not model_id:
+            raise RuntimeError(
+                f"model_id missing in ArtifactMessage for func_id={func_id} "
+                f"version={version} — model_id is required for artifact_type=model"
+            )
         dest_dir = Path(settings.STORAGE_PATH) / func_id / "model" / model_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "MODEL_FILE.bin"
