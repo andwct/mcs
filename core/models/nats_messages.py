@@ -4,10 +4,10 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ArtifactType(str, Enum):
-    """artifact_type values on MLOP-MCS-ARTIFACT stream."""
-    KERNEL = "kernel"
-    PACKAGE = "package"
-    MODEL = "model"
+    """artifact_type values on MLOP-MCS-ARTIFACT stream — uppercase to match siteMC enum."""
+    KERNEL = "KERNEL"
+    PACKAGE = "PACKAGE"
+    MODEL = "MODEL"
 
 
 class MetaType(str, Enum):
