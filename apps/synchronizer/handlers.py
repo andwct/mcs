@@ -50,6 +50,8 @@ async def handle_artifact_message(msg: Msg) -> None:
         await _handle_artifact(
             func_id, product_id, artifact_type, version, account, password,
             model_id=payload.model_id,
+            kernel_id=payload.kernel_id,
+            package_id=payload.package_id,
         )
         await msg.ack()
     except Exception as e:
@@ -68,19 +70,20 @@ async def _handle_artifact(
     account: str,
     password: str,
     model_id: str | None = None,
+    kernel_id: str | None = None,
+    package_id: str | None = None,
 ) -> None:
     """
     Route to correct downloader based on artifact_type.
-    Uses atomic write pattern (tmp file → rename) to prevent partial writes
-    being served by mcs-serving.
+    All IDs come directly from the ArtifactMessage — no Redis lookup.
+    Artifact stream and metadata stream are fully independent.
+    Atomic write pattern (tmp → rename) prevents partial writes.
     """
     from core.http.artifact_downloader import (
         download_model,
         download_kernel,
         download_package,
     )
-    from core.redis.kernel_list import get_kernel_list
-    from core.redis.package_list import get_package_list
     settings = get_settings()
 
     if artifact_type == ArtifactType.MODEL:
@@ -106,11 +109,11 @@ async def _handle_artifact(
             raise
 
     elif artifact_type == ArtifactType.KERNEL:
-        kernel = await get_kernel_list(func_id)
-        if not kernel:
-            raise RuntimeError(f"kernel_list not in Redis for func_id={func_id}")
-        kernel_id = kernel.get("kernelId")
-        kernel_version = kernel.get("kernelVersion")
+        if not kernel_id:
+            raise RuntimeError(
+                f"kernel_id missing in ArtifactMessage for func_id={func_id} "
+                f"version={version} — kernel_id is required for artifact_type=kernel"
+            )
         dest_dir = Path(settings.STORAGE_PATH) / func_id / "kernel" / kernel_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "MODEL_FILE.bin"
@@ -119,7 +122,7 @@ async def _handle_artifact(
             return
         tmp = dest.with_suffix(".tmp")
         try:
-            await download_kernel(func_id, product_id, kernel_id, kernel_version, account, password, tmp)
+            await download_kernel(func_id, product_id, kernel_id, version, account, password, tmp)
             tmp.rename(dest)
             logger.info(f"Kernel artifact stored: {dest}")
         except Exception:
@@ -128,11 +131,12 @@ async def _handle_artifact(
             raise
 
     elif artifact_type == ArtifactType.PACKAGE:
-        package = await get_package_list(func_id)
-        if not package:
-            raise RuntimeError(f"package_list not in Redis for func_id={func_id}")
-        package_version = package.get("packageVersion")
-        dest_dir = Path(settings.STORAGE_PATH) / func_id / "package"
+        if not package_id:
+            raise RuntimeError(
+                f"package_id missing in ArtifactMessage for func_id={func_id} "
+                f"version={version} — package_id is required for artifact_type=package"
+            )
+        dest_dir = Path(settings.STORAGE_PATH) / func_id / "package" / package_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "MODEL_FILE.bin"
         if dest.exists():
@@ -140,7 +144,7 @@ async def _handle_artifact(
             return
         tmp = dest.with_suffix(".tmp")
         try:
-            await download_package(func_id, product_id, package_version, account, password, tmp)
+            await download_package(func_id, product_id, version, account, password, tmp)
             tmp.rename(dest)
             logger.info(f"Package artifact stored: {dest}")
         except Exception:

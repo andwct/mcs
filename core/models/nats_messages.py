@@ -24,7 +24,9 @@ class ArtifactMessage(BaseModel):
     product_id: str
     artifact_type: ArtifactType
     deployed_version: str
-    model_id: str | None = None  # required when artifact_type == model
+    model_id: str | None = None    # required when artifact_type == model
+    kernel_id: str | None = None   # required when artifact_type == kernel
+    package_id: str | None = None  # required when artifact_type == package
 
 
 class MetadataMessage(BaseModel):
