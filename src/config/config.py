@@ -1,6 +1,10 @@
 """
 MCS adapter for EdgeService's src.config.config module.
 Bridges config.SITE_*_URL and config.PRODUCTS to MCS settings/state.
+
+Supports both EdgeService import styles:
+  from src.config import config        → uses this module directly
+  from src.config.config import config → uses the _Config instance
 """
 from core.config.settings import get_settings
 
@@ -16,10 +20,6 @@ class _Config:
 
     @property
     def PRODUCTS(self) -> dict:
-        """
-        Returns products in EdgeService shape:
-        {product_id: {FUNCTION_LIST: [...], MODEL_CENTER_ACCOUNT: ..., MODEL_CENTER_PASSWORD: ...}}
-        """
         from apps.synchronizer.state import get_all_products
         products = {}
         for product in get_all_products():
@@ -31,4 +31,20 @@ class _Config:
         return products
 
 
+# Instance — used when: from src.config.config import config
 config = _Config()
+
+
+# Module-level proxy attributes — used when: from src.config import config
+# then config.SITE_AUTHORIZATION_URL etc. resolve to the module attribute
+def __getattr__(name: str):
+    """
+    Module-level __getattr__ — called when attribute not found on module.
+    Delegates to the _Config instance so both import styles work:
+      from src.config import config → config is this module
+      config.SITE_AUTHORIZATION_URL → calls this __getattr__
+    """
+    return getattr(_config_instance, name)
+
+
+_config_instance = _Config()
