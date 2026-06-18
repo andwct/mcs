@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY apps/ ./apps/
 COPY core/ ./core/
+COPY src/ ./src/
 
 ENV PYTHONPATH=/app
 
