@@ -33,7 +33,7 @@ class RetrySessionAsync:
     """
     Async aiohttp session wrapper.
     Used by site_artifact_service.py (async methods via _post_data).
-    Mirrors aiohttp.ClientSession interface.
+    Converts requests-style auth tuple to aiohttp.BasicAuth.
     """
     def __init__(self):
         self._session = None
@@ -44,13 +44,20 @@ class RetrySessionAsync:
             self._session = aiohttp.ClientSession()
         return self._session
 
-    async def post(self, url, **kwargs):
-        session = await self._get_session()
-        return await session.post(url, **kwargs)
+    def _convert_auth(self, auth):
+        """Convert (login, password) tuple to aiohttp.BasicAuth."""
+        import aiohttp
+        if isinstance(auth, tuple) and len(auth) == 2:
+            return aiohttp.BasicAuth(auth[0], auth[1])
+        return auth
 
-    async def get(self, url, **kwargs):
+    async def post(self, url, auth=None, **kwargs):
         session = await self._get_session()
-        return await session.get(url, **kwargs)
+        return await session.post(url, auth=self._convert_auth(auth), **kwargs)
+
+    async def get(self, url, auth=None, **kwargs):
+        session = await self._get_session()
+        return await session.get(url, auth=self._convert_auth(auth), **kwargs)
 
     async def close(self):
         if self._session and not self._session.closed:

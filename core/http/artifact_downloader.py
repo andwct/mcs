@@ -5,9 +5,11 @@ Wires together SiteAuthorizationService, SiteArtifactCacheService,
 and SecurityModelServiceDataTunnel/SecurityObjectStore to download
 model, kernel and package artifacts from siteMC.
 
-site_artifact_service.py uses async def methods with aiohttp —
-all download functions here are properly async.
+site_artifact_service.py uses async aiohttp — all download functions
+are properly async. Responses are wrapped in a requests.Response-compatible
+object so EdgeService's decrypt methods work unchanged.
 """
+import io
 import logging
 from pathlib import Path
 from uuid import uuid1
@@ -25,6 +27,33 @@ logger = logging.getLogger(__name__)
 def _get_random_bytes(n: int) -> bytes:
     from Cryptodome.Random import get_random_bytes
     return get_random_bytes(n)
+
+
+class _ResponseWrapper:
+    """
+    Wraps aiohttp.ClientResponse to mimic requests.Response interface.
+    decrypt_rsa_aes_tunnel() accesses r.headers and r.content —
+    both need to work like requests.Response.
+    content must be bytes (not aiohttp StreamReader).
+    """
+    def __init__(self, headers: dict, content: bytes, status: int):
+        self.headers = headers
+        self.content = content
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
+
+async def _read_aiohttp_response(response) -> '_ResponseWrapper':
+    """Read aiohttp response into a requests.Response-compatible wrapper."""
+    content = await response.read()
+    return _ResponseWrapper(
+        headers=dict(response.headers),
+        content=content,
+        status=response.status,
+    )
 
 
 async def download_model(
@@ -80,7 +109,11 @@ async def download_model(
 
     # 4. Download via async aiohttp + RSA+AES-CBC tunnel
     svc = SiteArtifactCacheService()
-    response = await svc.get_model_from_artifact_service(item, pub_key=public_key)
+    raw_response = await svc.get_model_from_artifact_service(item, pub_key=public_key)
+    # Wrap aiohttp response → requests.Response-compatible object
+    # decrypt_rsa_aes_tunnel() needs r.content (bytes) and r.headers (dict)
+    response = await _read_aiohttp_response(raw_response)
+    response.raise_for_status()
 
     # 5. Decrypt tunnel → plaintext bytes
     plaintext = tunnel.decrypt_rsa_aes_tunnel(response, private_key)
@@ -131,7 +164,9 @@ async def download_kernel(
 
     # 3. Download async
     svc = SiteArtifactCacheService()
-    response = await svc.get_decrypt_kernel_from_artifact_service(item)
+    raw_response = await svc.get_decrypt_kernel_from_artifact_service(item)
+    response = await _read_aiohttp_response(raw_response)
+    response.raise_for_status()
 
     # 4. Decrypt
     security = SecurityObjectStore(function_id, "kernel", access_token)
@@ -182,7 +217,9 @@ async def download_package(
 
     # 3. Download async
     svc = SiteArtifactCacheService()
-    response = await svc.get_package_from_artifact_service(item)
+    raw_response = await svc.get_package_from_artifact_service(item)
+    response = await _read_aiohttp_response(raw_response)
+    response.raise_for_status()
 
     # 4. Decrypt
     security = SecurityObjectStore(function_id, "package", access_token)
