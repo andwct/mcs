@@ -48,7 +48,8 @@ async def handle_artifact_message(msg: Msg) -> None:
 
     try:
         await _handle_artifact(
-            func_id, product_id, artifact_type, version, account, password
+            func_id, product_id, artifact_type, version, account, password,
+            model_id=payload.model_id,
         )
         await msg.ack()
     except Exception as e:
@@ -66,6 +67,7 @@ async def _handle_artifact(
     version: str,
     account: str,
     password: str,
+    model_id: str | None = None,
 ) -> None:
     """
     Route to correct downloader based on artifact_type.
@@ -82,7 +84,6 @@ async def _handle_artifact(
     settings = get_settings()
 
     if artifact_type == ArtifactType.MODEL:
-        model_id = payload.model_id
         if not model_id:
             raise RuntimeError(
                 f"model_id missing in ArtifactMessage for func_id={func_id} "
