@@ -144,7 +144,7 @@ async def _handle_artifact(
             return
         tmp = dest.with_suffix(".tmp")
         try:
-            await download_package(func_id, product_id, version, account, password, tmp)
+            await download_package(func_id, product_id, package_id, version, account, password, tmp)
             tmp.rename(dest)
             logger.info(f"Package artifact stored: {dest}")
         except Exception:

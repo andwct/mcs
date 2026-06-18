@@ -10,6 +10,7 @@ pydantic-settings>=2.3.0
 # HTTP client
 requests==2.31.0
 httpx>=0.24.0
+aiohttp>=3.9.0
 starlette>=0.27.0
 
 # NATS JetStream client

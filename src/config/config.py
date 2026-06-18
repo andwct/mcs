@@ -19,6 +19,14 @@ class _Config:
         return get_settings().SITE_ARTIFACT_SERVICE_URL
 
     @property
+    def STAGE_NAME(self) -> str:
+        return get_settings().STAGE_NAME
+
+    @property
+    def FAB_NAME(self) -> str:
+        return get_settings().APP_NAME
+
+    @property
     def PRODUCTS(self) -> dict:
         from apps.synchronizer.state import get_all_products
         products = {}
