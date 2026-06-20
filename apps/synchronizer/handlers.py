@@ -128,9 +128,9 @@ async def _download_artifact(
         logger.info(f"Model decrypted: func_id={func_id} model_id={model_id} size={len(plaintext)}")
 
         # Step 5: Write to PVC (atomic)
-        dest_dir = Path(settings.STORAGE_PATH) / func_id / "model" / model_id
+        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "MODEL" / product_id / func_id / model_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "MODEL_FILE.bin"
+        dest = dest_dir / version
         if dest.exists():
             logger.info(f"Model already cached: {dest} — skipping")
             return
@@ -160,9 +160,9 @@ async def _download_artifact(
         if response is None or response.status_code != 200:
             raise RuntimeError(f"Kernel download failed: status={getattr(response, 'status_code', None)}")
 
-        dest_dir = Path(settings.STORAGE_PATH) / func_id / "kernel" / kernel_id
+        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "KERNEL" / product_id / func_id / kernel_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "MODEL_FILE.bin"
+        dest = dest_dir / version
         if dest.exists():
             logger.info(f"Kernel already cached: {dest} — skipping")
             return
@@ -192,9 +192,9 @@ async def _download_artifact(
         if response is None or response.status_code != 200:
             raise RuntimeError(f"Package download failed: status={getattr(response, 'status_code', None)}")
 
-        dest_dir = Path(settings.STORAGE_PATH) / func_id / "package" / package_id
+        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "PACKAGE" / product_id / func_id / package_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "MODEL_FILE.bin"
+        dest = dest_dir / version
         if dest.exists():
             logger.info(f"Package already cached: {dest} — skipping")
             return
