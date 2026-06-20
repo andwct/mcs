@@ -6,6 +6,22 @@
 
 ---
 
+## Status (as of latest commit)
+
+✅ **Phase 1 — Download pipeline: WORKING**
+- NATS artifact message → siteAuthorizationService → siteArtifactCacheService → decrypt → PVC write
+- Verified end-to-end: model file successfully downloaded, decrypted (RSA+AES-CBC tunnel),
+  and written to PVC at the new path layout (see below)
+- New PVC path layout implemented: `{STORAGE_PATH}/{FAB_NAME}/{TYPE}/{productID}/{function_ID}/{id}/{version}`
+
+❌ **Phase 2 — Partial encryption at rest: NOT IMPLEMENTED**
+- Files currently written to PVC as **plaintext** — no `.meta` file generated
+- No partial AES-GCM encryption applied after download
+- This is a known, intentional gap — tracked separately, not yet started
+- Required before production use: model and kernel files must be partially
+  encrypted at rest per security requirements (package files are exempt —
+  no `.meta` needed for package per design)
+
 ## Where We Are
 
 `feature/synchronizer-redis` delivered:
@@ -93,21 +109,27 @@ Step 3: Download artifact via RSA+AES-CBC tunnel
 ## On-Disk Layout (PVC)
 
 ```
-{STORAGE_PATH}/          # e.g. /mnt/mcs
-  {func_id}/
-    model/
-      {model_id}/
-        MODEL_FILE.bin   # plaintext in Phase 1, partially encrypted in Phase 2
-        META_FILE.meta   # segment map — Phase 2 only
-    kernel/
-      {kernel_id}/
-        MODEL_FILE.bin
-        META_FILE.meta   # Phase 2 only
-    package/
-      {package_id}/
-        MODEL_FILE.bin
-        META_FILE.meta   # Phase 2 only
+{STORAGE_PATH}/{FAB_NAME}/         # e.g. /mnt/mcs/mcs
+  MODEL/
+    {productID}/
+      {function_ID}/
+        {model_id}/
+          {model_version}        # plaintext in Phase 1, partially encrypted in Phase 2
+          {model_version}.meta   # segment map — Phase 2 only, NOT YET IMPLEMENTED
+  KERNEL/
+    {productID}/
+      {function_ID}/
+        {kernel_id}/
+          {kernel_version}
+          {kernel_version}.meta  # Phase 2 only, NOT YET IMPLEMENTED
+  PACKAGE/
+    {productID}/
+      {function_ID}/
+        {package_id}/
+          {package_version}      # no .meta — package not partially encrypted
 ```
+
+See issue #33 for path layout design rationale.
 
 ---
 
@@ -160,11 +182,12 @@ All other imports in `security.py` (`Cryptodome.*`) work as-is with `pycryptodom
 - [ ] Test: publish test `ArtifactMessage`, verify file appears on PVC
 - [ ] Verify idempotency — if file already exists, skip download
 
-### Phase 2 (separate branch)
+### Phase 2 (separate branch) — ⚠️ NOT STARTED
 - [ ] Copy partial AES-GCM encrypt/decrypt from EdgeService `security.py`
-- [ ] Generate `META_FILE.meta` on write
-- [ ] Apply partial encryption after download
+- [ ] Generate `{version}.meta` segment map file on write
+- [ ] Apply partial encryption after download (model + kernel only — package excluded)
 - [ ] Decrypt on read (for `mcs-serving`)
+- [ ] Update file naming: `{model_version}` and `{model_version}.meta` per new path layout (#33)
 
 ---
 
