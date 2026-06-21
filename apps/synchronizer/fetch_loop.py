@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from nats.js.client import JetStreamContext
+from nats.errors import TimeoutError as NatsTimeoutError
 from apps.synchronizer.handlers import handle_artifact_message, handle_metadata_message
 from apps.synchronizer.consumers import artifact_consumer_name, metadata_consumer_name
 from core.config.settings import get_settings
@@ -91,6 +92,11 @@ async def _fetch_loop(
                         f"func_id={func_id}: {e}"
                     )
                     await msg.nak()
+        except NatsTimeoutError:
+            # Normal idle state — no message arrived within the 5s long-poll
+            # window. Expected behavior on every quiet consumer, not an
+            # error. Silently continue to the next fetch() call.
+            continue
         except asyncio.CancelledError:
             logger.info(f"Fetch loop cancelled: consumer={consumer_name}")
             break
