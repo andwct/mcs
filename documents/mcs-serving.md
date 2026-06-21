@@ -116,7 +116,41 @@ StreamingResponse(
 
 Matches EdgeService exactly — Model Service sees no difference.
 
-### Cache-aware flow (CDN pattern)
+### Concurrent cache-miss requests — single-flight locking
+
+If two requests for the same artifact (same `model_id`+`version`) arrive
+while it's not yet on PVC, only ONE should trigger a siteMC download —
+the other waits and then reads the result from PVC. Prevents duplicate
+siteMC calls, duplicate decrypt work, and PVC write races.
+
+```python
+_download_locks: dict[str, asyncio.Lock] = {}
+
+async def get_or_download(lock_key: str, dest: Path, download_fn):
+    """
+    Single-flight pattern: only one coroutine downloads per lock_key,
+    others wait then re-check PVC (which now has the file).
+    """
+    if lock_key not in _download_locks:
+        _download_locks[lock_key] = asyncio.Lock()
+
+    async with _download_locks[lock_key]:
+        if dest.exists():
+            return  # already downloaded while we were waiting for the lock
+        await download_fn()
+
+# lock_key examples:
+#   f"model:{model_id}:{version}"
+#   f"kernel:{kernel_id}:{version}"
+#   f"package:{package_id}:{version}"
+```
+
+Lock dict grows unboundedly over time (one entry per unique artifact ever
+requested) — acceptable since entries are tiny (`asyncio.Lock` objects) and
+the process restarts periodically (pod lifecycle). Could add cleanup later
+if memory becomes a concern at very large scale.
+
+### Cache-aware flow (CDN pattern) — updated with locking
 
 ```
 POST /mcs/model {product_id, function_id, model_id, model_version}
@@ -128,14 +162,17 @@ Check PVC: {STORAGE_PATH}/{FAB_NAME}/MODEL/{product_id}/{function_id}/{model_id}
   │     └── StreamingResponse reading local file, same headers
   │
   └── NOT EXISTS (cache miss)
-        └── Fallback to siteMC:
-              1. SiteAuthorizationService.get_one_time_access_token()
-              2. SiteArtifactCacheService.get_model_from_artifact_service()
-              3. Decrypt (RSA+AES-CBC tunnel for model, AES for kernel/package)
-              4. TEE pattern: stream decrypted chunks to client AND
-                 write same chunks to PVC (atomic tmp→rename) concurrently
-              5. Client receives data with minimal added latency
-              6. PVC now has the file cached for next request
+        └── Acquire per-(model_id, version) lock
+              ├── Re-check PVC after lock acquired (another request may have
+              │   just finished downloading) → if now exists, serve from PVC
+              └── Still missing → this request downloads:
+                    1. SiteAuthorizationService.get_one_time_access_token()
+                    2. SiteArtifactCacheService.get_model_from_artifact_service()
+                    3. Decrypt (RSA+AES-CBC tunnel for model, AES for kernel/package)
+                    4. TEE pattern: stream decrypted chunks to client AND
+                       write same chunks to PVC (atomic tmp→rename) concurrently
+                    5. Client receives data with minimal added latency
+                    6. PVC now has the file cached for next request
 ```
 
 ### Tee streaming implementation approach
@@ -265,25 +302,23 @@ async def get_active_pats(
 
 ## Open Questions
 
-1. **`model_list` route — confirm pattern matches kernel/package** (you said "almost the same" for `ModelModel` request — does the route handler itself follow the identical try/except + Redis-read pattern?)
-2. **Concurrent cache-miss requests** — if 2 requests arrive simultaneously for the same uncached model, do we want a lock to prevent duplicate siteMC downloads? Or is duplicate download acceptable (idempotent PVC write)?
-3. **`apps/mcs/` container — separate consumer of NATS or pure HTTP server?** Confirmed: mcs-serving is pure HTTP, no NATS involvement — correct?
-4. **Phase 2 (partial encryption) impact on serving** — once implemented, `mcs-serving` cache-hit path will need to **decrypt** the partially-encrypted file using `.meta` before streaming. Out of scope for this branch; tracked separately.
+1. **Phase 2 (partial encryption) impact on serving** — once implemented, `mcs-serving` cache-hit path will need to **decrypt** the partially-encrypted file using `.meta` before streaming. Out of scope for this branch; tracked separately.
 
 ---
 
 ## Task List
 
-- [ ] Confirm `model_list` route matches kernel/package pattern
 - [ ] Extract shared download+decrypt logic into `core/artifact_service.py`
 - [ ] Refactor `apps/synchronizer/handlers.py` to use shared logic
 - [ ] Implement `apps/mcs/auth.py` — `verify_credentials` dependency
+- [ ] Implement single-flight locking (`_download_locks` per artifact)
 - [ ] Implement `apps/mcs/router.py` — all 7 endpoints
-- [ ] Implement `apps/mcs/lifespan.py` — startup sequence
+- [ ] Implement `apps/mcs/lifespan.py` — startup sequence (productConfig, state, Redis — no NATS)
 - [ ] Implement `apps/mcs/main.py` — FastAPI app
 - [ ] Implement tee streaming for cache-miss artifact serving
 - [ ] Test: cache hit (file on PVC) — verify correct StreamingResponse
 - [ ] Test: cache miss — verify fallback + PVC write + correct response
+- [ ] Test: concurrent cache-miss requests — verify only one siteMC download happens
 - [ ] Test: all 4 meta endpoints against Redis
 - [ ] Test: auth rejection (wrong credentials → 401)
 - [ ] Test: 404 on missing function_id / missing list
