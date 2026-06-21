@@ -77,139 +77,37 @@ async def _download_artifact(
     kernel_id: str | None = None,
     package_id: str | None = None,
 ) -> None:
-    from uuid import uuid1
-    from core.http.site_authorization import SiteAuthorizationService
-    from core.http.site_artifact_service import SiteArtifactCacheService
-    from core.utils.security import SecurityModelServiceDataTunnel
-    from core.models.artifact_models import ArtifactItem, ModelSyncModel, KernelModel, PackageModel
-    from Cryptodome.Random import get_random_bytes
-    settings = get_settings()
+    """
+    Pre-warm PVC: download artifact and write to disk (used by NATS
+    artifact message handler). Skips if already cached.
+    Shared download+decrypt logic lives in core/artifact_service.py
+    (also used by apps/mcs/router.py for on-demand fallback).
+    """
+    from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic
 
-    dummy_uid = str(uuid1())
-    auth_svc = SiteAuthorizationService()
-    artifact_svc = SiteArtifactCacheService()
-
-    # Step 1: Get one-time access token
-    auth_item = ArtifactItem(
-        product_id=product_id,
-        function_id=func_id,
-        ARTIFACT_TYPE=artifact_type.value,
-        dummy_uid=dummy_uid,
+    artifact_id = model_id if artifact_type == ArtifactType.MODEL else (
+        kernel_id if artifact_type == ArtifactType.KERNEL else package_id
     )
-    access_token = auth_svc.get_one_time_access_token(auth_item, action="DOWNLOAD")
-    if not access_token:
-        raise RuntimeError(f"Failed to get access token for func_id={func_id}")
-    logger.info(f"Got access token: func_id={func_id} artifact_type={artifact_type}")
+    if not artifact_id:
+        raise RuntimeError(f"No artifact_id provided for artifact_type={artifact_type}")
 
-    if artifact_type == ArtifactType.MODEL:
-        if not model_id:
-            raise RuntimeError(f"model_id required for artifact_type=model")
+    dest = artifact_dest_path(artifact_type, product_id, func_id, artifact_id, version)
+    if dest.exists():
+        logger.info(f"Artifact already cached: {dest} — skipping")
+        return
 
-        # Step 2: Generate RSA key pair
-        tunnel = SecurityModelServiceDataTunnel(aes_key=get_random_bytes(32))
-        private_key, public_key = tunnel.generate_rsa_key()
-
-        # Step 3: Build item + download
-        item = ModelSyncModel(
-            model_id=model_id,
-            function_id=func_id,
-            product_id=product_id,
-            model_version=version,
-            access_token=access_token,
-            dummy_uid=dummy_uid,
-            account=account,
-        )
-        response = await artifact_svc.get_model_from_artifact_service(item, pub_key=public_key)
-        if response is None or response.status_code != 200:
-            raise RuntimeError(f"Model download failed: status={getattr(response, 'status_code', None)}")
-
-        # Step 4: Decrypt RSA+AES-CBC tunnel
-        plaintext = tunnel.decrypt_rsa_aes_tunnel(response, private_key)
-        logger.info(f"Model decrypted: func_id={func_id} model_id={model_id} size={len(plaintext)}")
-
-        # Step 5: Write to PVC (atomic)
-        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "MODEL" / product_id / func_id / model_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / version
-        if dest.exists():
-            logger.info(f"Model already cached: {dest} — skipping")
-            return
-        tmp = dest.with_suffix(".tmp")
-        try:
-            tmp.write_bytes(plaintext)
-            tmp.rename(dest)
-            logger.info(f"Model stored: {dest}")
-        except Exception:
-            if tmp.exists():
-                tmp.unlink()
-            raise
-
-    elif artifact_type == ArtifactType.KERNEL:
-        if not kernel_id:
-            raise RuntimeError(f"kernel_id required for artifact_type=kernel")
-
-        item = KernelModel(
-            product_id=product_id,
-            function_id=func_id,
-            kernel_id=kernel_id,
-            kernel_version=version,
-            access_token=access_token,
-            dummy_uid=dummy_uid,
-        )
-        response = await artifact_svc.get_kernel_from_artifact_service(item)
-        if response is None or response.status_code != 200:
-            raise RuntimeError(f"Kernel download failed: status={getattr(response, 'status_code', None)}")
-
-        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "KERNEL" / product_id / func_id / kernel_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / version
-        if dest.exists():
-            logger.info(f"Kernel already cached: {dest} — skipping")
-            return
-        tmp = dest.with_suffix(".tmp")
-        try:
-            tmp.write_bytes(response.content)
-            tmp.rename(dest)
-            logger.info(f"Kernel stored: {dest}")
-        except Exception:
-            if tmp.exists():
-                tmp.unlink()
-            raise
-
-    elif artifact_type == ArtifactType.PACKAGE:
-        if not package_id:
-            raise RuntimeError(f"package_id required for artifact_type=package")
-
-        item = PackageModel(
-            product_id=product_id,
-            function_id=func_id,
-            package_id=package_id,
-            package_version=version,
-            access_token=access_token,
-            dummy_uid=dummy_uid,
-        )
-        response = await artifact_svc.get_package_from_artifact_service(item)
-        if response is None or response.status_code != 200:
-            raise RuntimeError(f"Package download failed: status={getattr(response, 'status_code', None)}")
-
-        dest_dir = Path(settings.STORAGE_PATH) / settings.FAB_NAME / "PACKAGE" / product_id / func_id / package_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / version
-        if dest.exists():
-            logger.info(f"Package already cached: {dest} — skipping")
-            return
-        tmp = dest.with_suffix(".tmp")
-        try:
-            tmp.write_bytes(response.content)
-            tmp.rename(dest)
-            logger.info(f"Package stored: {dest}")
-        except Exception:
-            if tmp.exists():
-                tmp.unlink()
-            raise
-
-    else:
-        logger.warning(f"Unknown artifact_type={artifact_type} — ignoring")
+    content = await fetch_artifact_bytes(
+        func_id=func_id,
+        product_id=product_id,
+        artifact_type=artifact_type,
+        version=version,
+        account=account,
+        password=password,
+        model_id=model_id,
+        kernel_id=kernel_id,
+        package_id=package_id,
+    )
+    write_atomic(dest, content)
 
 
 async def handle_metadata_message(msg: Msg) -> None:

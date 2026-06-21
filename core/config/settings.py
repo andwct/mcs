@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # ── Storage ───────────────────────────────────────────────────────────
     STORAGE_PATH: str = "/mnt/mcs"
+    DOWNLOAD_CHUNK_SIZE: int = 65536  # 64KB — matches EdgeService default
 
     # ── siteMC HTTP ───────────────────────────────────────────────────────
     SITE_AUTHORIZATION_URL: str = ""
