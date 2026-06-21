@@ -110,7 +110,7 @@ spec:
         - name: mcs-statefulset-storage
           persistentVolumeClaim:
             claimName: {{ .Values.pvcName }}
-        - name: mcs-configMapName
+        - name: mcs-configmap
           configMap:
             name: {{ .Values.configMapName }}
         - name: mcs-secrets
