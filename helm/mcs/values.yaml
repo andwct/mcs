@@ -5,12 +5,12 @@ app: mcs
 serviceName: mcs-service
 replicaCount: 3
 serviceAccountName: default
-configMapName: mcs-configmap
+configMapName: mcs-cm
 volumeMounts:
   - mountPath: /mnt/mcs
     name: mcs-statefulset-storage
   - mountPath: /etc/config
-    name: mcs-configmap
+    name: mcs-cm
   - mountPath: /root/mcs-secret
     name: mcs-secrets
 
