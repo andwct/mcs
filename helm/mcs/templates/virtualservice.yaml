@@ -1,24 +1,17 @@
-{{- if .Values.virtualService.enabled }}
-{{- $fullname := include "mcs.fullname" . }}
-{{- range .Values.virtualService.routes }}
+{{- range .Values.virtualServiceLB }}
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Values.namespace }}
+  namespace: {{ .namespace }}
   labels:
-    {{- include "mcs.labels" $ | nindent 4 }}
+    app: {{ $.Values.app }}
 spec:
   gateways:
-    {{- toYaml $.Values.virtualService.gateways | nindent 4 }}
+    {{- toYaml .gateways | nindent 4 }}
   hosts:
-    - {{ .host }}
+    {{- toYaml .hosts | nindent 4 }}
   http:
-    - route:
-        - destination:
-            host: {{ $fullname }}-service.{{ $.Values.namespace }}.svc.cluster.local
-            port:
-              number: {{ .port }}
-{{- end }}
+    {{- toYaml .http | nindent 4 }}
 {{- end }}

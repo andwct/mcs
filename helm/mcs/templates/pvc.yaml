@@ -1,34 +1,22 @@
 {{- /*
-Pre-create one PVC per pod ordinal with a per-zone StorageClass.
-
-StatefulSet volumeClaimTemplates produce PVCs named:
-  <volumeClaimTemplate.name>-<statefulset-name>-<ordinal>
-
-By pre-creating PVCs with these exact names (and matching storageClassName,
-accessModes, size), the StatefulSet adopts the existing Bound PVC for each
-ordinal instead of dynamically provisioning with a single shared StorageClass.
-
-mcs-0 -> netapp-san-ssd-dc1
-mcs-1 -> netapp-san-ssd-dc2
-mcs-2 -> netapp-san-ssd-dc3
+Static PVC matching the StatefulSet's volumeMounts (mcs-statefulset-storage).
+Current values.yaml uses a single shared PVC (pvcName) rather than
+per-ordinal StatefulSet volumeClaimTemplates, since storage.mountPath
+in containers references a fixed volume name "mcs-statefulset-storage".
 */ -}}
-{{- if .Values.storage.zonalStorageClass.enabled }}
-{{- $fullname := include "mcs.fullname" . }}
-{{- range $i := until (int .Values.replicaCount) }}
----
+{{- if .Values.zonalStorageClass.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: model-cache-{{ $fullname }}-{{ $i }}
-  namespace: {{ $.Values.namespace }}
+  name: {{ .Values.pvcName }}
+  namespace: {{ .Values.configMap.namespace }}
   labels:
-    {{- include "mcs.labels" $ | nindent 4 }}
+    app: {{ .Values.app }}
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ printf "%s%d" $.Values.storage.zonalStorageClass.prefix (add $i 1) }}
+  storageClassName: {{ printf "%s1" .Values.zonalStorageClass.prefix }}
   resources:
     requests:
-      storage: {{ $.Values.storage.size }}
-{{- end }}
+      storage: {{ .Values.persistence.size }}
 {{- end }}
