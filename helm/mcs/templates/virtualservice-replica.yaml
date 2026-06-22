@@ -17,7 +17,7 @@
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ $i }}
+  name: {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ printf "%d" $i }}
   namespace: {{ $root.Values.configMap.namespace }}
   labels:
     app: {{ $root.Values.app }}
@@ -25,18 +25,18 @@ spec:
   gateways:
     {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
   hosts:
-    - {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ $i }}.{{ $root.Values.virtualService.baseDomain }}
+    - {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
   http:
     - route:
         - destination:
-            host: {{ $root.Values.name }}-{{ $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
             port:
               number: 8080
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ $i }}
+  name: {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ printf "%d" $i }}
   namespace: {{ $root.Values.configMap.namespace }}
   labels:
     app: {{ $root.Values.app }}
@@ -44,18 +44,18 @@ spec:
   gateways:
     {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
   hosts:
-    - {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ $i }}.{{ $root.Values.virtualService.baseDomain }}
+    - {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
   http:
     - route:
         - destination:
-            host: {{ $root.Values.name }}-{{ $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
             port:
               number: 8081
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ $root.Values.virtualService.janitorHostPrefix }}-{{ $i }}
+  name: {{ $root.Values.virtualService.janitorHostPrefix }}-{{ printf "%d" $i }}
   namespace: {{ $root.Values.configMap.namespace }}
   labels:
     app: {{ $root.Values.app }}
@@ -63,11 +63,11 @@ spec:
   gateways:
     {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
   hosts:
-    - {{ $root.Values.virtualService.janitorHostPrefix }}-{{ $i }}.{{ $root.Values.virtualService.baseDomain }}
+    - {{ $root.Values.virtualService.janitorHostPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
   http:
     - route:
         - destination:
-            host: {{ $root.Values.name }}-{{ $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
             port:
               number: 8082
 {{- end }}
