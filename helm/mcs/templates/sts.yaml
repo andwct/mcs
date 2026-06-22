@@ -107,12 +107,20 @@ spec:
             {{- toYaml .Values.janitor.livenessProbe | nindent 12 }}
 
       volumes:
-        - name: mcs-statefulset-storage
-          persistentVolumeClaim:
-            claimName: {{ .Values.pvcName }}
         - name: mcs-cm
           configMap:
             name: {{ .Values.configMapName }}
         - name: mcs-secrets
           secret:
             secretName: {{ (index .Values.secret 0).name }}
+
+  volumeClaimTemplates:
+    - metadata:
+        name: mcs-statefulset-storage
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{ printf "%s1" .Values.zonalStorageClass.prefix }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
