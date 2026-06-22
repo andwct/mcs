@@ -52,6 +52,7 @@ The `update_type` field determines which siteMC stream to forward to.
   "update_type": "ARTIFACT" | "METADATA",
 
   "function_id": "funcID_123",
+  "function_name": "funcName_123",
   "product_id": "productID_ABC",
 
   "meta_type": "model_list" | "kernel_list" | "package_list" | "pat_list",
@@ -65,12 +66,18 @@ The `update_type` field determines which siteMC stream to forward to.
 }
 ```
 
+`function_name` is required for both ARTIFACT and METADATA messages —
+MetaUpdater uses it to construct the correct siteMC subject:
+`MLOP-MCS-ARTIFACT.{function_id}-{function_name}`
+`MLOP-MCS-METADATA.{function_id}-{function_name}`
+
 **Field usage by update_type:**
 
 | Field | ARTIFACT msg | METADATA msg |
 |---|---|---|
 | `update_type` | `"ARTIFACT"` | `"METADATA"` |
 | `function_id` | ✅ required | ✅ required |
+| `function_name` | ✅ required | ✅ required |
 | `product_id` | ✅ required | ✅ required |
 | `artifact_type` | ✅ required (`MODEL`/`KERNEL`/`PACKAGE`) | ❌ omit |
 | `deployed_version` | ✅ required | ❌ omit |
@@ -87,21 +94,21 @@ The `update_type` field determines which siteMC stream to forward to.
 Receive msg from MCS-UPDATE stream
   │
   ├── update_type == "ARTIFACT"
-  │     → Strip: meta_type
   │     → Build ArtifactMessage:
   │         {function_id, product_id, artifact_type,
   │          deployed_version, model_id, kernel_id, package_id}
-  │     → Publish to MLOP-MCS-ARTIFACT.{function_id}-{function_name}
+  │     → Subject: MLOP-MCS-ARTIFACT.{function_id}-{function_name}
+  │     → Publish to MLOP-MCS-ARTIFACT stream
   │
   └── update_type == "METADATA"
-        → Strip: artifact_type, deployed_version, kernel_id, package_id
         → Build MetadataMessage:
             {function_id, product_id, meta_type, model_id}
-        → Publish to MLOP-MCS-METADATA.{function_id}-{function_name}
+        → Subject: MLOP-MCS-METADATA.{function_id}-{function_name}
+        → Publish to MLOP-MCS-METADATA stream
 ```
 
-No external lookups needed — all fields required for transformation
-are present in the incoming message.
+No external lookups needed — `function_name` is carried in the
+incoming message, so subject construction is purely in-memory.
 
 ---
 
@@ -166,12 +173,9 @@ Exact schema MCS synchronizer already consumes:
 
 ## Open Questions
 
-1. **`function_name` in subject** — MetaUpdater needs to know the
-   `function_name` (human-readable name) to construct the subject
-   `MLOP-MCS-ARTIFACT.{function_id}-{function_name}`. Does MetaUpdater
-   have access to a `FUNCTION_NAME_MAPPING` config (like MCS's
-   `FUNCTION_NAME_MAPPING` in `ABC.json`), or should we include
-   `function_name` directly in the incoming MC NATS message?
+1. ~~`function_name` in subject~~ — **Resolved**: include `function_name`
+   directly in the incoming MC NATS message. MetaUpdater stays stateless,
+   no config lookup needed.
 
 2. **MC NATS consumer type** — is the existing subscribe logic using
    a push consumer or pull consumer on MC NATS?
