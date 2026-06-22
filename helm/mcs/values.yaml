@@ -111,8 +111,8 @@ virtualService:
   gateways:
     - mlop-site-model-center-test-central-gateway
   mcsHostsPrefix: "mcs-mcs-replica"
-  synchronizerHostPrefix: "mcs-synchronizer-replica"
-  janitorHostPrefix: "mcs-janitor-replica"
+  synchronizerHostsPrefix: "mcs-synchronizer-replica"
+  janitorHostsPrefix: "mcs-janitor-replica"
   baseDomain: "mlop-site-model-center-test.ftest.dummy.com"
 
 serviceLB:

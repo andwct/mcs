@@ -36,7 +36,7 @@ spec:
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ printf "%d" $i }}
+  name: {{ $root.Values.virtualService.synchronizerHostsPrefix }}-{{ printf "%d" $i }}
   namespace: {{ $root.Values.configMap.namespace }}
   labels:
     app: {{ $root.Values.app }}
@@ -44,7 +44,7 @@ spec:
   gateways:
     {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
   hosts:
-    - {{ $root.Values.virtualService.synchronizerHostPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
+    - {{ $root.Values.virtualService.synchronizerHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
   http:
     - route:
         - destination:
@@ -55,7 +55,7 @@ spec:
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ $root.Values.virtualService.janitorHostPrefix }}-{{ printf "%d" $i }}
+  name: {{ $root.Values.virtualService.janitorHostsPrefix }}-{{ printf "%d" $i }}
   namespace: {{ $root.Values.configMap.namespace }}
   labels:
     app: {{ $root.Values.app }}
@@ -63,7 +63,7 @@ spec:
   gateways:
     {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
   hosts:
-    - {{ $root.Values.virtualService.janitorHostPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
+    - {{ $root.Values.virtualService.janitorHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
   http:
     - route:
         - destination:
