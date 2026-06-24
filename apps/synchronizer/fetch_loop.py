@@ -16,15 +16,15 @@ async def start_fetch_loops(
     js: JetStreamContext,
     pod_name: str,
     statefulset_name: str,
-    func_subjects: list[tuple[str, str, str, str, str]],
+    func_subjects: list[tuple[str, str, str, str]],
 ) -> None:
     """
     Launch fetch loop tasks for both streams per func_id.
-    func_subjects: (product_id, func_id, sanitized_name, artifact_subject, metadata_subject)
+    func_subjects: (product_id, func_id, artifact_subject, metadata_subject)
     """
     _fetch_tasks.clear()
 
-    for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
+    for product_id, func_id, artifact_subject, metadata_subject in func_subjects:
         # Artifact pull loop — per pod, per func_id (broadcast)
         artifact_name = artifact_consumer_name(pod_name, func_id)
         artifact_task = asyncio.create_task(

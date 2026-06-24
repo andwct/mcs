@@ -1,6 +1,7 @@
 from enum import Enum
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 
 class ArtifactType(str, Enum):
@@ -19,28 +20,44 @@ class MetaType(str, Enum):
 
 
 class ArtifactMessage(BaseModel):
-    """MLOP-MCS-ARTIFACT stream message schema."""
+    """
+    MLOP-MCS-ARTIFACT stream message schema.
+    JSON payload uses camelCase keys (Java/JSON convention):
+      functionId, productId, artifactType, deployedVersion,
+      modelId, kernelId, packageId
+    Python code accesses fields as snake_case (function_id etc.)
+    via Pydantic's alias_generator.
+    """
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,  # allow both snake_case and camelCase in Python
+    )
+
     function_id: str
     product_id: str
     artifact_type: ArtifactType
     deployed_version: str
-    model_id: str | None = None    # required when artifact_type == model
-    kernel_id: str | None = None   # required when artifact_type == kernel
-    package_id: str | None = None  # required when artifact_type == package
+    model_id: str | None = None    # required when artifact_type == MODEL
+    kernel_id: str | None = None   # required when artifact_type == KERNEL
+    package_id: str | None = None  # required when artifact_type == PACKAGE
 
 
 class MetadataMessage(BaseModel):
     """
     MLOP-MCS-METADATA stream message schema.
+    JSON payload uses camelCase keys:
+      functionId, productId, metaType, modelId
+    Python code accesses fields as snake_case via Pydantic's alias_generator.
 
-    Notifies MCS that a meta list has changed. MCS uses function_id,
-    product_id and meta_type to fetch the updated data from siteMC
-    HTTP API and write it to Redis.
-
-    model_id is only present when meta_type == model_list — identifies
+    modelId is only present when metaType == model_list — identifies
     which specific model was updated so MCS can parse it from the full
     model list response and update just that one field in Redis.
     """
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
     function_id: str
     product_id: str
     meta_type: MetaType
