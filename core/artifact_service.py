@@ -22,23 +22,25 @@ def artifact_dest_path(
     artifact_type: ArtifactType,
     product_id: str,
     func_id: str,
-    artifact_id: str,
+    artifact_id: str | None,
     version: str,
 ) -> Path:
     """
     PVC path: {STORAGE_PATH}/{FAB_NAME}/{TYPE}/{productID}/{function_ID}/{id}/{version}
+    PACKAGE omits {id} — one package per function, func_id is sufficient.
     See documents/synchronizer-artifact.md issue #33 for design rationale.
     """
     settings = get_settings()
-    return (
+    base = (
         Path(settings.STORAGE_PATH)
         / settings.FAB_NAME
         / artifact_type.value
         / product_id
         / func_id
-        / artifact_id
-        / version
     )
+    if artifact_id is not None:
+        base = base / artifact_id
+    return base / version
 
 
 async def fetch_artifact_bytes(
@@ -132,13 +134,9 @@ async def fetch_artifact_bytes(
         return response.content
 
     elif artifact_type == ArtifactType.PACKAGE:
-        if not package_id:
-            raise RuntimeError("package_id required for artifact_type=PACKAGE")
-
         item = PackageModel(
             product_id=product_id,
             function_id=func_id,
-            package_id=package_id,
             package_version=version,
             access_token=access_token,
             dummy_uid=dummy_uid,
@@ -148,7 +146,7 @@ async def fetch_artifact_bytes(
             raise RuntimeError(
                 f"Package download failed: status={getattr(response, 'status_code', None)}"
             )
-        logger.info(f"Package downloaded: func_id={func_id} package_id={package_id}")
+        logger.info(f"Package downloaded: func_id={func_id}")
         return response.content
 
     else:

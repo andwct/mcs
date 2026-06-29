@@ -46,7 +46,6 @@ class PackageModel:
     """Passed to SiteArtifactCacheService.get_package_from_artifact_service()."""
     product_id: str
     function_id: str
-    package_id: str
     package_version: str
     access_token: str
     dummy_uid: str

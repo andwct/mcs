@@ -39,7 +39,7 @@ class ArtifactMessage(BaseModel):
     deployed_version: str
     model_id: str | None = None    # required when artifact_type == MODEL
     kernel_id: str | None = None   # required when artifact_type == KERNEL
-    package_id: str | None = None  # required when artifact_type == PACKAGE
+    package_id: str | None = None  # not used — siteArtifactService does not require packageId
 
 
 class MetadataMessage(BaseModel):

@@ -85,8 +85,8 @@ async def _serve_artifact(
             headers={"Content-Disposition": "attachment; filename=test.zip"},
         )
 
-    # Cache miss — single-flight lock per (artifact_type, artifact_id, version)
-    lock_key = f"{artifact_type.value}:{artifact_id}:{version}"
+    # Cache miss — single-flight lock per artifact path
+    lock_key = f"{artifact_type.value}:{artifact_id or function_id}:{version}"
     async with _get_lock(lock_key):
         # Re-check — another request may have completed the download
         # while we were waiting for the lock
@@ -169,9 +169,8 @@ async def get_package(
         ArtifactType.PACKAGE,
         body.product_id,
         body.function_id,
-        body.package_id,
+        None,
         body.package_version,
-        package_id=body.package_id,
     )
 
 

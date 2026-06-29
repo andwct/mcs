@@ -85,11 +85,16 @@ async def _download_artifact(
     """
     from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic
 
-    artifact_id = model_id if artifact_type == ArtifactType.MODEL else (
-        kernel_id if artifact_type == ArtifactType.KERNEL else package_id
-    )
-    if not artifact_id:
-        raise RuntimeError(f"No artifact_id provided for artifact_type={artifact_type}")
+    if artifact_type == ArtifactType.MODEL:
+        artifact_id = model_id
+        if not artifact_id:
+            raise RuntimeError("model_id required for artifact_type=MODEL")
+    elif artifact_type == ArtifactType.KERNEL:
+        artifact_id = kernel_id
+        if not artifact_id:
+            raise RuntimeError("kernel_id required for artifact_type=KERNEL")
+    else:
+        artifact_id = None  # PACKAGE — no id segment in PVC path
 
     dest = artifact_dest_path(artifact_type, product_id, func_id, artifact_id, version)
     if dest.exists():
