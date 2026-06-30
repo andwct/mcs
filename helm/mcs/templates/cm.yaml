@@ -1,36 +1,16 @@
-# ── Env ConfigMap ─────────────────────────────────────────────────────────────
-# Single source of truth (.Values.envConfig). Populates core/config/settings.py
-# via envFrom in all 3 containers.
+# ── ConfigMap ─────────────────────────────────────────────────────────────
+# Single ConfigMap containing one.properties (env config, key=value format,
+# parsed by core/k8s/configmap.py:load_one_properties() + bootstrap.py)
+# and one JSON file per product (e.g. ABC.json), loaded by
+# core/k8s/configmap.py:load_product_configs().
+# Mounted as a volume at /etc/config in all 3 containers (see sts.yaml
+# volumeMounts -> .Values.volumeMounts).
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "mcs.envConfigMapName" . }}
-  namespace: {{ .Values.namespace }}
+  name: {{ .Values.configMapName }}
+  namespace: {{ .Values.configMap.namespace }}
   labels:
-    {{- include "mcs.labels" . | nindent 4 }}
+    app: {{ .Values.app }}
 data:
-  {{- range $key, $value := .Values.envConfig }}
-  {{ $key }}: {{ $value | quote }}
-  {{- end }}
-
----
-# ── Product Config ConfigMap ──────────────────────────────────────────────────
-# Mounted as a volume at envConfig.CONFIGMAP_MOUNT_PATH (/etc/config).
-# - envConfig.json: same data as the env ConfigMap above, rendered as JSON
-#   (single source of truth — no duplication). Loaded by
-#   core/k8s/configmap.py:load_env_config().
-# - One JSON file per product, loaded by load_product_configs().
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "mcs.productConfigMapName" . }}
-  namespace: {{ .Values.namespace }}
-  labels:
-    {{- include "mcs.labels" . | nindent 4 }}
-data:
-  {{ .Values.envConfig.CONFIGMAP_ENV_CONFIG_FILE }}: |
-{{ .Values.envConfig | toJson | indent 4 }}
-  {{- range $filename, $content := .Values.productConfig.products }}
-  {{ $filename }}: |
-{{ $content | indent 4 }}
-  {{- end }}
+  {{- .Values.configMap.data | toYaml | nindent 2 }}

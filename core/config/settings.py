@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     CONFIGMAP_MOUNT_PATH: str = "/etc/config"
 
     # ── Storage ───────────────────────────────────────────────────────────
-    STORAGE_PATH: str = "/mnt/models"
+    STORAGE_PATH: str = "/mnt/mcs"
+    DOWNLOAD_CHUNK_SIZE: int = 65536  # 64KB — matches EdgeService default
 
     # ── siteMC HTTP ───────────────────────────────────────────────────────
     SITE_AUTHORIZATION_URL: str = ""
@@ -52,6 +53,25 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     STAGE_NAME: str = "SIT"
     APP_NAME: str = "mcs"
+    FAB_NAME: str = "mcs"
+
+    @property
+    def PRODUCTS(self) -> dict:
+        """
+        Returns products in shape expected by site_authorization.py and
+        site_artifact_service.py:
+        {product_id: {FUNCTION_LIST, MODEL_CENTER_ACCOUNT, MODEL_CENTER_PASSWORD}}
+        Delegates to state.py which is populated at startup.
+        """
+        from apps.synchronizer.state import get_all_products
+        result = {}
+        for product in get_all_products():
+            result[product.PRODUCT_ID] = {
+                "FUNCTION_LIST": product.FUNCTION_LIST,
+                "MODEL_CENTER_ACCOUNT": product.MODEL_CENTER_ACCOUNT,
+                "MODEL_CENTER_PASSWORD": product.MODEL_CENTER_PASSWORD,
+            }
+        return result
 
     # ── Janitor ───────────────────────────────────────────────────────────
     JANITOR_INTERVAL_SECONDS: int = 300

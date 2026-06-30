@@ -112,28 +112,25 @@ def load_product_configs() -> list[ProductConfig]:
 
 def get_all_function_subjects(
     products: list[ProductConfig],
-) -> list[tuple[str, str, str, str, str]]:
+) -> list[tuple[str, str, str, str]]:
     """
-    Return flat list of (product_id, func_id, sanitized_name,
-    artifact_subject, metadata_subject).
+    Return flat list of (product_id, func_id, artifact_subject, metadata_subject).
 
-    artifact_subject = "MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}"
-    metadata_subject = "MLOP-MCS-METADATA.{func_id}-{sanitized_name}"
+    artifact_subject = "MLOP-MCS-ARTIFACT.{func_id}"
+    metadata_subject = "MLOP-MCS-METADATA.{func_id}"
 
-    Both are valid subsets of their stream's interest subject (*.>).
-    sanitized_name comes directly from FUNCTION_NAME_MAPPING — never
-    derived by splitting the subject string.
+    Simplified from previous design that included function_name in the
+    subject — function_id alone is sufficient for routing (closes #36).
     """
+    settings = get_settings()
     result = []
     for product in products:
         for func_id in product.FUNCTION_LIST:
-            sanitized_name = product.get_sanitized_name(func_id)
-            artifact_subject = product.get_artifact_subject(func_id)
-            metadata_subject = product.get_metadata_subject(func_id)
+            artifact_subject = f"{settings.NATS_ARTIFACT_STREAM}.{func_id}"
+            metadata_subject = f"{settings.NATS_METADATA_STREAM}.{func_id}"
             result.append((
                 product.PRODUCT_ID,
                 func_id,
-                sanitized_name,
                 artifact_subject,
                 metadata_subject,
             ))

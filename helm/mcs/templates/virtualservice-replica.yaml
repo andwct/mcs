@@ -1,0 +1,73 @@
+# ── Per-pod VirtualServices ──────────────────────────────────────────────
+# Each StatefulSet replica gets its own external hostname per container,
+# routing directly to that pod's stable per-pod DNS name (via the headless
+# Service). This allows external clients (e.g. testing Swagger UI, or any
+# caller that needs consistent routing to a specific pod's local PVC cache
+# state) to target an individual replica instead of being load-balanced
+# across all 3 by the shared headless mcs-service.
+#
+# Hostname pattern: {prefix}-{ordinal}.{baseDomain}
+# e.g. mcs-mcs-replica-0.mlop-site-model-center-test.ftest.dummy.com
+#
+# Internal target: {pod-name}.{headless-service}.{namespace}.svc.cluster.local
+# e.g. mcs-statefulset-0.mcs-service.mlop-site-model-center.svc.cluster.local
+{{- $root := . }}
+{{- range $i, $e := until (int .Values.replicaCount) }}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ printf "%d" $i }}
+  namespace: {{ $root.Values.configMap.namespace }}
+  labels:
+    app: {{ $root.Values.app }}
+spec:
+  gateways:
+    {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
+  hosts:
+    - {{ $root.Values.virtualService.mcsHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
+  http:
+    - route:
+        - destination:
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            port:
+              number: 8080
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ $root.Values.virtualService.synchronizerHostsPrefix }}-{{ printf "%d" $i }}
+  namespace: {{ $root.Values.configMap.namespace }}
+  labels:
+    app: {{ $root.Values.app }}
+spec:
+  gateways:
+    {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
+  hosts:
+    - {{ $root.Values.virtualService.synchronizerHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
+  http:
+    - route:
+        - destination:
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            port:
+              number: 8081
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ $root.Values.virtualService.janitorHostsPrefix }}-{{ printf "%d" $i }}
+  namespace: {{ $root.Values.configMap.namespace }}
+  labels:
+    app: {{ $root.Values.app }}
+spec:
+  gateways:
+    {{- toYaml $root.Values.virtualService.gateways | nindent 4 }}
+  hosts:
+    - {{ $root.Values.virtualService.janitorHostsPrefix }}-{{ printf "%d" $i }}.{{ $root.Values.virtualService.baseDomain }}
+  http:
+    - route:
+        - destination:
+            host: {{ $root.Values.name }}-{{ printf "%d" $i }}.{{ $root.Values.serviceName }}.{{ $root.Values.configMap.namespace }}.svc.cluster.local
+            port:
+              number: 8082
+{{- end }}

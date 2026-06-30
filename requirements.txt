@@ -10,6 +10,7 @@ pydantic-settings>=2.3.0
 # HTTP client
 requests==2.31.0
 httpx>=0.24.0
+aiohttp>=3.9.0
 starlette>=0.27.0
 
 # NATS JetStream client
@@ -25,8 +26,8 @@ kubernetes>=29.0.0
 kubernetes_asyncio==33.3.0
 
 # Crypto & security
-pycryptodomex==3.16
-cryptography==43.0.0
+pycryptodomex==3.12    # Cryptodome.* imports (security.py, site_artifact_service.py)
+cryptography==43.0.1
 blake3
 
 # Async support

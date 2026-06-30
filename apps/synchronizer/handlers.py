@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from pathlib import Path
 from nats.aio.msg import Msg
@@ -18,7 +17,7 @@ from core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-_artifact_locks: dict[str, asyncio.Lock] = {}
+
 
 
 # ── Artifact handler ────────────────────────────────────────────────────────
@@ -31,60 +30,90 @@ async def handle_artifact_message(msg: Msg) -> None:
         await msg.ack()
         return
 
-    if payload.artifact_type != ArtifactType.MODEL:
-        logger.debug(f"Ignoring artifact_type={payload.artifact_type}")
+    func_id = payload.function_id
+    product_id = payload.product_id
+    artifact_type = payload.artifact_type
+    version = payload.deployed_version
+    model_id = payload.model_id
+    kernel_id = payload.kernel_id
+    package_id = payload.package_id
+
+    try:
+        product = get_product_by_func_id(func_id)
+    except KeyError as e:
+        logger.error(f"Unknown function_id={func_id}: {e}")
         await msg.ack()
         return
 
-    func_id = payload.function_id
-    version = payload.deployed_version
-    lock_key = f"{func_id}:{version}"
+    try:
+        await _download_artifact(
+            func_id=func_id,
+            product_id=product_id,
+            artifact_type=artifact_type,
+            version=version,
+            model_id=model_id,
+            kernel_id=kernel_id,
+            package_id=package_id,
+            account=product.MODEL_CENTER_ACCOUNT,
+            password=product.MODEL_CENTER_PASSWORD,
+        )
+        await msg.ack()
+    except Exception as e:
+        logger.error(
+            f"Artifact download failed artifact_type={artifact_type} "
+            f"func_id={func_id} version={version}: {e}"
+        )
+        await msg.nak()
 
-    if lock_key not in _artifact_locks:
-        _artifact_locks[lock_key] = asyncio.Lock()
 
-    async with _artifact_locks[lock_key]:
-        try:
-            # Credentials from productConfig — product-level identity
-            product = get_product_by_func_id(func_id)
-            await _fetch_and_store(
-                func_id, version,
-                product.MODEL_CENTER_ACCOUNT,
-                product.MODEL_CENTER_PASSWORD,
-            )
-            await msg.ack()
-        except Exception as e:
-            logger.error(f"Artifact fetch failed func_id={func_id} version={version}: {e}")
-            await msg.nak()
-
-
-async def _fetch_and_store(
+async def _download_artifact(
     func_id: str,
+    product_id: str,
+    artifact_type: ArtifactType,
     version: str,
     account: str,
     password: str,
+    model_id: str | None = None,
+    kernel_id: str | None = None,
+    package_id: str | None = None,
 ) -> None:
-    from core.http.artifact_client import fetch_model_file
-    settings = get_settings()
+    """
+    Pre-warm PVC: download artifact and write to disk (used by NATS
+    artifact message handler). Skips if already cached.
+    Shared download+decrypt logic lives in core/artifact_service.py
+    (also used by apps/mcs/router.py for on-demand fallback).
+    """
+    from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic
 
-    dest = Path(settings.STORAGE_PATH) / func_id / version / "model.bin"
+    if artifact_type == ArtifactType.MODEL:
+        artifact_id = model_id
+        if not artifact_id:
+            raise RuntimeError("model_id required for artifact_type=MODEL")
+    elif artifact_type == ArtifactType.KERNEL:
+        artifact_id = kernel_id
+        if not artifact_id:
+            raise RuntimeError("kernel_id required for artifact_type=KERNEL")
+    else:
+        artifact_id = None  # PACKAGE — no id segment in PVC path
+
+    dest = artifact_dest_path(artifact_type, product_id, func_id, artifact_id, version)
     if dest.exists():
         logger.info(f"Artifact already cached: {dest} — skipping")
         return
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
-    try:
-        await fetch_model_file(func_id, version, tmp, account, password)
-        tmp.rename(dest)
-        logger.info(f"Artifact stored: {dest}")
-    except Exception:
-        if tmp.exists():
-            tmp.unlink()
-        raise
+    content = await fetch_artifact_bytes(
+        func_id=func_id,
+        product_id=product_id,
+        artifact_type=artifact_type,
+        version=version,
+        account=account,
+        password=password,
+        model_id=model_id,
+        kernel_id=kernel_id,
+        package_id=package_id,
+    )
+    write_atomic(dest, content)
 
-
-# ── Metadata handler ────────────────────────────────────────────────────────
 
 async def handle_metadata_message(msg: Msg) -> None:
     try:

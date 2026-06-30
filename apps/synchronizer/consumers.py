@@ -35,7 +35,7 @@ async def ensure_artifact_consumer(
     Create pull consumer for artifact broadcast per (pod, func_id).
 
     filter_subject must be a subset of stream's interest subject
-    MLOP-MCS-ARTIFACT.> — so subject format is:
+    MLOP-MCS-ARTIFACT.> — subject format is:
     MLOP-MCS-ARTIFACT.{func_id}-{sanitized_name}
 
     Compatible with NATS 2.9.x (filter_subject singular).
@@ -87,7 +87,7 @@ async def ensure_metadata_consumer(
     Create pull consumer for metadata per func_id, shared across all pods.
 
     filter_subject must be a subset of stream's interest subject
-    MLOP-MCS-METADATA.> — so subject format is:
+    MLOP-MCS-METADATA.> — subject format is:
     MLOP-MCS-METADATA.{func_id}-{sanitized_name}
 
     Compatible with NATS 2.9.x (filter_subject singular).

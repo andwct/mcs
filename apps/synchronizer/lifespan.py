@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"Loaded {len(products)} products, "
         f"{len(func_subjects)} functions: "
-        f"{[(f, a, m) for (_, f, _, a, m) in func_subjects]}"
+        f"{[(f, a, m) for (_, f, a, m) in func_subjects]}"
     )
 
     # 2. Initialise product state — O(1) lookup by product_id/function_id
@@ -67,11 +67,11 @@ async def lifespan(app: FastAPI):
     await warm_up_redis(products)
 
     # 8. Per func_id: create artifact pull consumer (broadcast — own consumer per pod)
-    for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
+    for product_id, func_id, artifact_subject, metadata_subject in func_subjects:
         await ensure_artifact_consumer(js, pod_name, func_id, artifact_subject)
 
     # 9. Per func_id: create metadata pull consumer (queue-group — shared across pods)
-    for product_id, func_id, sanitized_name, artifact_subject, metadata_subject in func_subjects:
+    for product_id, func_id, artifact_subject, metadata_subject in func_subjects:
         await ensure_metadata_consumer(js, statefulset_name, func_id, metadata_subject)
 
     # 10. Start fetch loops for BOTH streams — one artifact + one metadata task per func_id
