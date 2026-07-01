@@ -74,7 +74,7 @@ class Settings(BaseSettings):
         return result
 
     # ── Janitor ───────────────────────────────────────────────────────────
-    JANITOR_INTERVAL_SECONDS: int = 300
+    JANITOR_PORT: int = 82
     JANITOR_HIGH_WATERMARK: float = 0.90
     JANITOR_LOW_WATERMARK: float = 0.75
 

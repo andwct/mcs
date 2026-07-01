@@ -212,7 +212,7 @@ configMap:
       REDIS_KERNEL_LIST_KEY=mcs:kernel_list
       REDIS_PACKAGE_LIST_KEY=mcs:package_list
       REDIS_PAT_LIST_KEY=mcs:pat_list
-      JANITOR_INTERVAL_SECONDS=300
+      JANITOR_PORT=82
       JANITOR_HIGH_WATERMARK=0.90
       JANITOR_LOW_WATERMARK=0.75
 
