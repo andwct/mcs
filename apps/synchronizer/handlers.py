@@ -83,7 +83,7 @@ async def _download_artifact(
     Shared download+decrypt logic lives in core/artifact_service.py
     (also used by apps/mcs/router.py for on-demand fallback).
     """
-    from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic
+    from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic, trigger_janitor_check
 
     if artifact_type == ArtifactType.MODEL:
         artifact_id = model_id
@@ -113,6 +113,7 @@ async def _download_artifact(
         package_id=package_id,
     )
     write_atomic(dest, content)
+    await trigger_janitor_check()
 
 
 async def handle_metadata_message(msg: Msg) -> None:
