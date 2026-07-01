@@ -19,7 +19,7 @@ from fastapi.security import HTTPBasicCredentials
 from core.config.settings import get_settings
 from core.models.api_models import ModelRequestModel, KernelRequestModel, PackageRequestModel
 from core.models.nats_messages import ArtifactType
-from core.artifact_service import fetch_artifact_bytes, artifact_dest_path
+from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, trigger_janitor_check
 from apps.synchronizer.state import get_product_by_func_id
 from apps.mcs.auth import security, verify_credentials_path, verify_credentials_for_function_id
 
@@ -60,6 +60,7 @@ async def _tee_and_cache(content: bytes, dest: Path, chunk_size: int):
                 yield chunk
         tmp.rename(dest)
         logger.info(f"Artifact cached: {dest}")
+        await trigger_janitor_check()
     except Exception:
         if tmp.exists():
             tmp.unlink()
@@ -79,6 +80,11 @@ async def _serve_artifact(
 
     if dest.exists():
         logger.info(f"Cache hit: {dest}")
+        import os as _os
+        try:
+            _os.utime(dest, None)  # update mtime for LRU tracking
+        except OSError:
+            pass
         return StreamingResponse(
             _read_file_chunks(dest, settings.DOWNLOAD_CHUNK_SIZE),
             media_type="application/octet-stream",
