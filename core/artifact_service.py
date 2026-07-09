@@ -8,9 +8,12 @@ Single source of truth for the 3-step siteMC download pipeline:
   2. SiteArtifactCacheService.get_{model,kernel,package}_from_artifact_service()
   3. Decrypt (RSA+AES-CBC tunnel for model, AES for kernel/package)
 """
+import asyncio
 import logging
 from pathlib import Path
 from uuid import uuid1
+
+import httpx
 
 from core.config.settings import get_settings
 from core.models.nats_messages import ArtifactType
@@ -151,6 +154,23 @@ async def fetch_artifact_bytes(
 
     else:
         raise ValueError(f"Unknown artifact_type={artifact_type}")
+
+
+async def trigger_janitor_check() -> None:
+    """Fire-and-forget POST to janitor /janitor/check after a file is written to PVC."""
+    asyncio.create_task(_post_janitor_check())
+
+
+async def _post_janitor_check() -> None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"http://localhost:{settings.JANITOR_PORT}/janitor/check",
+                timeout=2.0,
+            )
+    except Exception as e:
+        logger.warning(f"Janitor trigger failed (non-fatal): {e}")
 
 
 def write_atomic(dest: Path, content: bytes) -> None:
