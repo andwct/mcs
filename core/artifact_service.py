@@ -185,3 +185,29 @@ def write_atomic(dest: Path, content: bytes) -> None:
         if tmp.exists():
             tmp.unlink()
         raise
+
+
+def write_artifact(dest: Path, content: bytes, artifact_type: ArtifactType) -> None:
+    """
+    Store an artifact on PVC. MODEL/KERNEL are partially encrypted with a
+    {version}.meta sidecar (documents/partial-encryption.md); PACKAGE is
+    written as plaintext with no sidecar. Artifact file is written before
+    .meta — an artifact without .meta is treated as a cache miss on read.
+    """
+    if artifact_type in (ArtifactType.MODEL, ArtifactType.KERNEL):
+        from core.utils.encryption import encrypt_partial, meta_path
+        stored, meta = encrypt_partial(content)
+        write_atomic(dest, stored)
+        write_atomic(meta_path(dest), meta.model_dump_json().encode())
+    else:
+        write_atomic(dest, content)
+
+
+def is_cached(dest: Path, artifact_type: ArtifactType) -> bool:
+    """Valid cache entry: MODEL/KERNEL also require the .meta sidecar."""
+    if not dest.exists():
+        return False
+    if artifact_type in (ArtifactType.MODEL, ArtifactType.KERNEL):
+        from core.utils.encryption import meta_path
+        return meta_path(dest).exists()
+    return True
