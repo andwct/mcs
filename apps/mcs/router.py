@@ -81,8 +81,11 @@ async def _serve_artifact(
     if dest.exists():
         logger.info(f"Cache hit: {dest}")
         import os as _os
+        import time as _time
         try:
-            _os.utime(dest, None)  # update mtime for LRU tracking
+            # Update atime only (mtime preserved as true write time) —
+            # janitor evicts LRU based on atime.
+            _os.utime(dest, (_time.time(), dest.stat().st_mtime))
         except OSError:
             pass
         return StreamingResponse(

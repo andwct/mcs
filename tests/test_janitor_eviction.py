@@ -108,16 +108,16 @@ def test_prune_empty_parents_stops_at_non_empty(tmp_path):
 
 # ── run_eviction_sweep ────────────────────────────────────────────────────────
 
-def test_eviction_deletes_oldest_first(tmp_path):
+def test_eviction_deletes_least_recently_accessed_first(tmp_path):
     fab = tmp_path / "mcs"
     old_file = fab / "MODEL" / "p" / "f" / "uuid1" / "v1"
     new_file = fab / "MODEL" / "p" / "f" / "uuid2" / "v1"
     _write_file(old_file, b"x" * 1024)
     _write_file(new_file, b"x" * 1024)
 
-    # Make old_file older
+    # Make old_file's atime older (mtime irrelevant to eviction order)
     old_time = time.time() - 3600
-    os.utime(old_file, (old_time, old_time))
+    os.utime(old_file, (old_time, old_file.stat().st_mtime))
 
     # Start at 95% used, low watermark at 75% — need to free ~20% (200 bytes of 1000)
     # Each file is 1024 bytes; freeing 1 file should be enough
@@ -161,8 +161,8 @@ def test_eviction_stops_at_low_watermark(tmp_path):
     for i in range(5):
         f = fab / "MODEL" / "p" / "f" / f"uuid{i}" / "v1"
         _write_file(f, b"x" * 100)
-        t = time.time() - (5 - i) * 100  # older files first
-        os.utime(f, (t, t))
+        t = time.time() - (5 - i) * 100  # older atime first
+        os.utime(f, (t, f.stat().st_mtime))
         files.append(f)
 
     # 95% used, low=75%, total=1000 → need to free 200 bytes → 2 files of 100 bytes each
@@ -179,13 +179,15 @@ def test_eviction_stops_at_low_watermark(tmp_path):
 
 # ── LRU touch (os.utime integration) ─────────────────────────────────────────
 
-def test_utime_touch_updates_mtime(tmp_path):
+def test_utime_touch_updates_atime_only(tmp_path):
     f = tmp_path / "artifact"
     f.write_bytes(b"data")
 
     old_time = time.time() - 3600
     os.utime(f, (old_time, old_time))
-    assert f.stat().st_mtime == pytest.approx(old_time, abs=1)
+    assert f.stat().st_atime == pytest.approx(old_time, abs=1)
 
-    os.utime(f, None)  # touch — simulates mcs-serving cache-hit
-    assert f.stat().st_mtime == pytest.approx(time.time(), abs=2)
+    # Simulates mcs-serving cache-hit: bump atime, preserve mtime
+    os.utime(f, (time.time(), f.stat().st_mtime))
+    assert f.stat().st_atime == pytest.approx(time.time(), abs=2)
+    assert f.stat().st_mtime == pytest.approx(old_time, abs=1)  # mtime untouched

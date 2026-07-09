@@ -27,7 +27,7 @@ POST http://localhost:{janitor_port}/janitor/check   (fire-and-forget)
       ↓
 Janitor: shutil.disk_usage() gate check
       ↓ (only if over HIGH_WATERMARK)
-Full PVC walk + stat → sort by mtime (LRU) → evict oldest-first until LOW_WATERMARK
+Full PVC walk + stat → sort by atime (LRU) → evict oldest-first until LOW_WATERMARK
 ```
 
 ---
@@ -92,22 +92,32 @@ If over `HIGH_WATERMARK`: proceed to eviction sweep.
 
 ## LRU Tracking — `os.utime()` Touch on Cache-Hit
 
-To support LRU eviction without relying on filesystem `atime` (unreliable on
-NFS-backed NetApp PVCs due to `relatime` mount semantics and ONTAP-level
-atime settings), mcs-serving explicitly updates a file's `mtime` on every
-successful cache-hit serve:
+The kernel's automatic atime-on-read is unreliable on NFS-backed NetApp
+PVCs (`relatime`/`noatime` mount semantics, ONTAP-level atime settings), so
+MCS never depends on it. Instead, mcs-serving **explicitly sets** a file's
+`atime` on every successful cache-hit serve, while preserving `mtime` as the
+true write time:
 
 ```python
 # apps/mcs/router.py — _serve_artifact(), on cache-hit path
-os.utime(dest, None)  # sets mtime = now, marks file as recently used
+os.utime(dest, (time.time(), dest.stat().st_mtime))  # atime = now, mtime unchanged
 ```
 
-Janitor reads `st_mtime` from `os.stat()` as the last-used timestamp.
+Timestamp semantics on MCS artifact files:
+- `atime` — last time the artifact was served to Model Service
+  (initially equal to write time until first serve)
+- `mtime` — when the artifact was written to PVC (never repurposed)
+
+Janitor reads `st_atime` from `os.stat()` as the last-used timestamp.
 Files that have never been served retain their original write time as
-`mtime` — naturally ranking below files that have been served recently.
+`atime` — naturally ranking below files that have been served recently.
 
 This approach:
-- Works regardless of NFS mount options or ONTAP atime configuration
+- Works regardless of NFS mount options or ONTAP atime configuration —
+  the explicit `utime()` syscall is always honored, unlike lazy
+  atime-on-read tracking
+- Keeps each timestamp's natural meaning — `stat`/`ls -l` output on the
+  PVC stays readable and truthful
 - Requires no separate data store (no Redis, no sidecar index)
 - Self-cleaning: when a file is evicted, its timestamp disappears with it
 
@@ -132,10 +142,10 @@ KERNEL:  {STORAGE_PATH}/{FAB_NAME}/KERNEL/{productID}/{funcID}/{id}/{version}
 PACKAGE: {STORAGE_PATH}/{FAB_NAME}/PACKAGE/{productID}/{funcID}/{version}
 ```
 
-### Step 2 — Sort by mtime ascending (LRU)
+### Step 2 — Sort by atime ascending (LRU)
 
 ```python
-candidates.sort(key=lambda f: f.st_mtime)  # oldest mtime first
+candidates.sort(key=lambda f: f.st_atime)  # least recently accessed first
 ```
 
 ### Step 3 — Delete oldest-first until LOW_WATERMARK
@@ -151,7 +161,7 @@ for file_path, stat in candidates:
     freed_bytes += stat.st_size
     os.remove(file_path)
     _prune_empty_parents(file_path, storage_path)
-    logger.info(f"Evicted: {file_path} size={stat.st_size} mtime={stat.st_mtime}")
+    logger.info(f"Evicted: {file_path} size={stat.st_size} atime={stat.st_atime}")
 
 if (usage.used - freed_bytes) / usage.total > low_watermark:
     logger.warning(
@@ -250,7 +260,7 @@ Response: {"ready": true, "evicting": false|true}
 | File | Change |
 |---|---|
 | `core/artifact_service.py` | After `write_atomic()` succeeds, fire `POST localhost:{JANITOR_PORT}/janitor/check` (non-blocking, swallow errors) |
-| `apps/mcs/router.py` | On cache-hit path in `_serve_artifact()`, call `os.utime(dest, None)` to update mtime for LRU tracking |
+| `apps/mcs/router.py` | On cache-hit path in `_serve_artifact()`, call `os.utime(dest, (now, st_mtime))` to update atime for LRU tracking (mtime preserved) |
 | `core/config/settings.py` | Remove `JANITOR_INTERVAL_SECONDS`; add `JANITOR_PORT` |
 | `helm/mcs/values.yaml` | Remove `JANITOR_INTERVAL_SECONDS` from `envConfig` |
 

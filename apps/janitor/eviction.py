@@ -56,7 +56,7 @@ def run_eviction_sweep(
         return
 
     candidates = _collect_candidates(root, fab_name)
-    candidates.sort(key=lambda x: x[1].st_mtime)  # oldest mtime first (LRU)
+    candidates.sort(key=lambda x: x[1].st_atime)  # least recently accessed first (LRU)
 
     freed_bytes = 0
     for file_path, stat in candidates:
@@ -69,7 +69,7 @@ def run_eviction_sweep(
             _prune_empty_parents(file_path, root)
             logger.info(
                 f"Evicted: {file_path} "
-                f"size={stat.st_size} mtime={stat.st_mtime:.0f}"
+                f"size={stat.st_size} atime={stat.st_atime:.0f}"
             )
         except FileNotFoundError:
             pass  # already gone — count size anyway since it freed space
