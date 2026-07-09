@@ -73,6 +73,12 @@ class Settings(BaseSettings):
             }
         return result
 
+    # ── Partial encryption (MODEL/KERNEL at rest) ─────────────────────────
+    # Filename under SECRET_MOUNT_PATH containing the raw key string.
+    # Chunk thresholds are fixed constants in core/utils/encryption.py —
+    # changing them would break decryption of already-cached artifacts.
+    ENCRYPTION_KEY_FILE: str = "ENCRYPTION_KEY"
+
     # ── Janitor ───────────────────────────────────────────────────────────
     JANITOR_PORT: int = 82
     JANITOR_HIGH_WATERMARK: float = 0.90
