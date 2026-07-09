@@ -14,7 +14,12 @@ def is_over_high_watermark(storage_path: str, high_watermark: float) -> bool:
 
 
 def _collect_candidates(storage_path: Path, fab_name: str) -> list[tuple[Path, os.stat_result]]:
-    """Walk MODEL/KERNEL/PACKAGE dirs, return (path, stat) for all non-.tmp files."""
+    """
+    Walk MODEL/KERNEL/PACKAGE dirs, return (path, stat) for all non-.tmp
+    files. .meta sidecars are not independent candidates — they are evicted
+    together with their artifact. An orphaned .meta (artifact missing) is
+    deleted on sight.
+    """
     candidates = []
     base = storage_path / fab_name
     for artifact_type in _ARTIFACT_TYPES:
@@ -26,6 +31,15 @@ def _collect_candidates(storage_path: Path, fab_name: str) -> list[tuple[Path, o
                 if name.endswith(".tmp"):
                     continue
                 path = Path(root) / name
+                if name.endswith(".meta"):
+                    artifact = path.parent / name[: -len(".meta")]
+                    if not artifact.exists():
+                        logger.warning(f"Orphaned .meta without artifact — deleting: {path}")
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
+                    continue  # sidecars follow their artifact, never LRU-ranked
                 try:
                     candidates.append((path, path.stat()))
                 except FileNotFoundError:
@@ -66,6 +80,13 @@ def run_eviction_sweep(
         try:
             freed_bytes += stat.st_size
             os.remove(file_path)
+            # Evict the .meta sidecar together with its artifact
+            sidecar = file_path.parent / (file_path.name + ".meta")
+            try:
+                freed_bytes += sidecar.stat().st_size
+                sidecar.unlink()
+            except FileNotFoundError:
+                pass  # PACKAGE or already gone
             _prune_empty_parents(file_path, root)
             logger.info(
                 f"Evicted: {file_path} "
