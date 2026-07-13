@@ -11,6 +11,8 @@ read directly from Redis (populated by synchronizer) — no siteMC fallback.
 """
 import asyncio
 import logging
+import os
+import time
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -19,7 +21,19 @@ from fastapi.security import HTTPBasicCredentials
 from core.config.settings import get_settings
 from core.models.api_models import ModelRequestModel, KernelRequestModel, PackageRequestModel
 from core.models.nats_messages import ArtifactType
-from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, trigger_janitor_check
+from core.artifact_service import (
+    fetch_artifact_bytes,
+    artifact_dest_path,
+    write_artifact,
+    trigger_janitor_check,
+)
+from core.utils.encryption import (
+    ArtifactDecryptionError,
+    load_meta,
+    meta_path,
+    _get_fernet,
+)
+from cryptography.fernet import InvalidToken
 from apps.synchronizer.state import get_product_by_func_id
 from apps.mcs.auth import security, verify_credentials_path, verify_credentials_for_function_id
 
@@ -44,27 +58,123 @@ async def _read_file_chunks(path: Path, chunk_size: int):
             yield chunk
 
 
-async def _tee_and_cache(content: bytes, dest: Path, chunk_size: int):
+def _delete_cache_entry(dest: Path) -> None:
+    """Remove artifact and .meta sidecar (either may be absent)."""
+    for path in (dest, meta_path(dest)):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+async def _stream_decrypted(dest: Path, segments: list, chunk_size: int):
     """
-    Generator: yields chunks of already-downloaded content to the client
-    while writing the same content to PVC (atomic tmp -> rename).
-    Used on cache miss after content has been fully downloaded+decrypted.
+    Generator: stream a partially-encrypted artifact as plaintext.
+    segments: ("file", offset, length) → read plaintext range from disk;
+              ("mem", bytes)           → already-decrypted chunk from memory.
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
+    with open(dest, "rb") as f:
+        for seg in segments:
+            if seg[0] == "mem":
+                data = seg[1]
+                for i in range(0, len(data), chunk_size):
+                    yield data[i : i + chunk_size]
+            else:
+                _, offset, length = seg
+                f.seek(offset)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+
+def _touch_atime(dest: Path) -> None:
+    """Update atime only (mtime preserved) — janitor evicts LRU by atime."""
     try:
-        with open(tmp, "wb") as f:
-            for i in range(0, len(content), chunk_size):
-                chunk = content[i : i + chunk_size]
-                f.write(chunk)
-                yield chunk
-        tmp.rename(dest)
-        logger.info(f"Artifact cached: {dest}")
-        await trigger_janitor_check()
-    except Exception:
-        if tmp.exists():
-            tmp.unlink()
-        raise
+        os.utime(dest, (time.time(), dest.stat().st_mtime))
+    except OSError:
+        pass
+
+
+def _try_serve_cached(
+    dest: Path,
+    artifact_type: ArtifactType,
+    chunk_size: int,
+) -> StreamingResponse | None:
+    """
+    Serve from PVC if a valid cache entry exists, else return None.
+    Orphaned (artifact without .meta) or corrupt (undecryptable) MODEL/KERNEL
+    entries are deleted so the caller falls through to the siteMC re-fetch.
+    """
+    if not dest.exists():
+        return None
+
+    headers = {"Content-Disposition": "attachment; filename=test.zip"}
+
+    if artifact_type == ArtifactType.PACKAGE:
+        logger.info(f"Cache hit: {dest}")
+        _touch_atime(dest)
+        return StreamingResponse(
+            _read_file_chunks(dest, chunk_size),
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+
+    # MODEL/KERNEL — require .meta sidecar and decryptable content
+    if not meta_path(dest).exists():
+        logger.warning(f"Orphaned artifact without .meta: {dest} — deleting, cache miss")
+        _delete_cache_entry(dest)
+        return None
+
+    try:
+        meta = load_meta(dest)
+        if meta.algorithm != "fernet":
+            raise ArtifactDecryptionError(f"Unknown algorithm: {meta.algorithm}")
+        if meta.stored_size != dest.stat().st_size:
+            raise ArtifactDecryptionError(
+                f"Stored size mismatch: meta says {meta.stored_size}, "
+                f"file has {dest.stat().st_size} bytes"
+            )
+        # Decrypt encrypted chunks up front (≤ ~1.4MB each by design);
+        # plaintext chunks stream straight from disk.
+        fernet = _get_fernet()
+        segments = []
+        offset = 0
+        with open(dest, "rb") as f:
+            for chunk in meta.chunks:
+                if chunk.encrypted:
+                    f.seek(offset)
+                    token = f.read(chunk.stored_length)
+                    try:
+                        plain = fernet.decrypt(token)
+                    except InvalidToken as e:
+                        raise ArtifactDecryptionError(
+                            "Fernet decryption failed (corrupt data or wrong key)"
+                        ) from e
+                    if len(plain) != chunk.plaintext_length:
+                        raise ArtifactDecryptionError(
+                            f"Decrypted chunk length {len(plain)} != "
+                            f"expected {chunk.plaintext_length}"
+                        )
+                    segments.append(("mem", plain))
+                else:
+                    segments.append(("file", offset, chunk.stored_length))
+                offset += chunk.stored_length
+    except ArtifactDecryptionError as e:
+        logger.error(f"Corrupt cache entry: {dest} — deleting, cache miss. {e}")
+        _delete_cache_entry(dest)
+        return None
+
+    logger.info(f"Cache hit (decrypting {len([s for s in segments if s[0] == 'mem'])} chunk(s)): {dest}")
+    _touch_atime(dest)
+    return StreamingResponse(
+        _stream_decrypted(dest, segments, chunk_size),
+        media_type="application/octet-stream",
+        headers=headers,
+    )
 
 
 async def _serve_artifact(
@@ -78,34 +188,19 @@ async def _serve_artifact(
     settings = get_settings()
     dest = artifact_dest_path(artifact_type, product_id, function_id, artifact_id, version)
 
-    if dest.exists():
-        logger.info(f"Cache hit: {dest}")
-        import os as _os
-        import time as _time
-        try:
-            # Update atime only (mtime preserved as true write time) —
-            # janitor evicts LRU based on atime.
-            _os.utime(dest, (_time.time(), dest.stat().st_mtime))
-        except OSError:
-            pass
-        return StreamingResponse(
-            _read_file_chunks(dest, settings.DOWNLOAD_CHUNK_SIZE),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": "attachment; filename=test.zip"},
-        )
+    response = _try_serve_cached(dest, artifact_type, settings.DOWNLOAD_CHUNK_SIZE)
+    if response is not None:
+        return response
 
     # Cache miss — single-flight lock per artifact path
     lock_key = f"{artifact_type.value}:{artifact_id or function_id}:{version}"
     async with _get_lock(lock_key):
         # Re-check — another request may have completed the download
         # while we were waiting for the lock
-        if dest.exists():
+        response = _try_serve_cached(dest, artifact_type, settings.DOWNLOAD_CHUNK_SIZE)
+        if response is not None:
             logger.info(f"Cache hit after lock wait: {dest}")
-            return StreamingResponse(
-                _read_file_chunks(dest, settings.DOWNLOAD_CHUNK_SIZE),
-                media_type="application/octet-stream",
-                headers={"Content-Disposition": "attachment; filename=test.zip"},
-            )
+            return response
 
         logger.info(f"Cache miss: {dest} — falling back to siteMC")
         try:
@@ -127,8 +222,21 @@ async def _serve_artifact(
             logger.error(f"Artifact fetch failed: {e}")
             raise HTTPException(status_code=502, detail=f"Failed to fetch artifact from siteMC: {e}")
 
+        # Write-through: PVC copy is encrypted (MODEL/KERNEL) or plaintext
+        # (PACKAGE); the client always receives plaintext from memory.
+        try:
+            write_artifact(dest, content, artifact_type)
+            await trigger_janitor_check()
+        except Exception as e:
+            # Serving takes priority over caching — log and stream anyway
+            logger.error(f"Write-through cache failed for {dest}: {e}")
+
+        async def _stream_plaintext():
+            for i in range(0, len(content), settings.DOWNLOAD_CHUNK_SIZE):
+                yield content[i : i + settings.DOWNLOAD_CHUNK_SIZE]
+
         return StreamingResponse(
-            _tee_and_cache(content, dest, settings.DOWNLOAD_CHUNK_SIZE),
+            _stream_plaintext(),
             media_type="application/octet-stream",
             headers={"Content-Disposition": "attachment; filename=test.zip"},
         )

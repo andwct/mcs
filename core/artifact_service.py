@@ -112,7 +112,8 @@ async def fetch_artifact_bytes(
         # Step 3: Decrypt RSA+AES-CBC tunnel
         plaintext = tunnel.decrypt_rsa_aes_tunnel(response, private_key)
         logger.info(
-            f"Model decrypted: func_id={func_id} model_id={model_id} size={len(plaintext)}"
+            f"Model transport-decrypted from siteMC (RSA+AES-CBC tunnel): "
+            f"func_id={func_id} model_id={model_id} size={len(plaintext)}"
         )
         return plaintext
 
@@ -133,7 +134,10 @@ async def fetch_artifact_bytes(
             raise RuntimeError(
                 f"Kernel download failed: status={getattr(response, 'status_code', None)}"
             )
-        logger.info(f"Kernel downloaded: func_id={func_id} kernel_id={kernel_id}")
+        logger.info(
+            f"Kernel downloaded from siteMC: func_id={func_id} kernel_id={kernel_id} "
+            f"size={len(response.content)}"
+        )
         return response.content
 
     elif artifact_type == ArtifactType.PACKAGE:
@@ -149,7 +153,10 @@ async def fetch_artifact_bytes(
             raise RuntimeError(
                 f"Package download failed: status={getattr(response, 'status_code', None)}"
             )
-        logger.info(f"Package downloaded: func_id={func_id}")
+        logger.info(
+            f"Package downloaded from siteMC: func_id={func_id} "
+            f"size={len(response.content)}"
+        )
         return response.content
 
     else:
@@ -180,8 +187,41 @@ def write_atomic(dest: Path, content: bytes) -> None:
     try:
         tmp.write_bytes(content)
         tmp.rename(dest)
-        logger.info(f"Artifact stored: {dest}")
+        logger.debug(f"File written atomically: {dest}")
     except Exception:
         if tmp.exists():
             tmp.unlink()
         raise
+
+
+def write_artifact(dest: Path, content: bytes, artifact_type: ArtifactType) -> None:
+    """
+    Store an artifact on PVC. MODEL/KERNEL are partially encrypted with a
+    {version}.meta sidecar (documents/partial-encryption.md); PACKAGE is
+    written as plaintext with no sidecar. Artifact file is written before
+    .meta — an artifact without .meta is treated as a cache miss on read.
+    """
+    if artifact_type in (ArtifactType.MODEL, ArtifactType.KERNEL):
+        from core.utils.encryption import encrypt_partial, meta_path
+        stored, meta = encrypt_partial(content)
+        write_atomic(dest, stored)
+        write_atomic(meta_path(dest), meta.model_dump_json().encode())
+        encrypted = sum(c.stored_length for c in meta.chunks if c.encrypted)
+        logger.info(
+            f"Artifact stored PARTIALLY ENCRYPTED (fernet) with .meta sidecar: {dest} "
+            f"plaintext_size={meta.plaintext_size} stored_size={meta.stored_size} "
+            f"encrypted_bytes={encrypted}"
+        )
+    else:
+        write_atomic(dest, content)
+        logger.info(f"Artifact stored plaintext (PACKAGE — no encryption): {dest}")
+
+
+def is_cached(dest: Path, artifact_type: ArtifactType) -> bool:
+    """Valid cache entry: MODEL/KERNEL also require the .meta sidecar."""
+    if not dest.exists():
+        return False
+    if artifact_type in (ArtifactType.MODEL, ArtifactType.KERNEL):
+        from core.utils.encryption import meta_path
+        return meta_path(dest).exists()
+    return True

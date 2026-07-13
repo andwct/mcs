@@ -83,7 +83,13 @@ async def _download_artifact(
     Shared download+decrypt logic lives in core/artifact_service.py
     (also used by apps/mcs/router.py for on-demand fallback).
     """
-    from core.artifact_service import fetch_artifact_bytes, artifact_dest_path, write_atomic, trigger_janitor_check
+    from core.artifact_service import (
+        fetch_artifact_bytes,
+        artifact_dest_path,
+        write_artifact,
+        is_cached,
+        trigger_janitor_check,
+    )
 
     if artifact_type == ArtifactType.MODEL:
         artifact_id = model_id
@@ -97,7 +103,7 @@ async def _download_artifact(
         artifact_id = None  # PACKAGE — no id segment in PVC path
 
     dest = artifact_dest_path(artifact_type, product_id, func_id, artifact_id, version)
-    if dest.exists():
+    if is_cached(dest, artifact_type):
         logger.info(f"Artifact already cached: {dest} — skipping")
         return
 
@@ -112,7 +118,7 @@ async def _download_artifact(
         kernel_id=kernel_id,
         package_id=package_id,
     )
-    write_atomic(dest, content)
+    write_artifact(dest, content, artifact_type)
     await trigger_janitor_check()
 
 
