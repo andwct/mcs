@@ -364,14 +364,21 @@ async def get_package_list(
 async def get_active_pats(
     function_id: str,
     _: None = Depends(verify_credentials_path),
-) -> list:
+) -> dict:
+    """
+    Mirrors EdgeService's exact response shape — Model Service expects the
+    full envelope, not a bare JSON array:
+    {"status_code": "...", "message": "Get successfully", "content": [...]}
+    Redis stores content only (see core/redis/pat_list.py); this endpoint
+    re-wraps it into the envelope on the way out.
+    """
     from core.redis.pat_list import get_pat_list as redis_get_pat_list
 
     try:
         record = await redis_get_pat_list(function_id)
         if record is None:
             raise FileNotFoundError(f"pat_list not found for function_id={function_id}")
-        return record
+        return {"status_code": "0", "message": "Get successfully", "content": record}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:

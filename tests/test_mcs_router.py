@@ -19,6 +19,7 @@ from apps.mcs.router import (
     _try_serve_cached,
     _delete_cache_entry,
     _stream_decrypted,
+    get_active_pats,
 )
 
 CHUNK = 65536
@@ -172,3 +173,32 @@ def test_stream_decrypted_mixed_segments(tmp_path):
 
     out = asyncio.run(drain())
     assert out == b"AAAA" + b"decrypted-middle" + b"BBBB"
+
+
+# ── get_active_pats — EdgeService envelope contract ──────────────────────────
+# get_active_pats() does `from core.redis.pat_list import get_pat_list as
+# redis_get_pat_list` inside the function body, so the patch target is the
+# original module attribute, not an apps.mcs.router name.
+
+async def test_active_pats_returns_full_envelope_not_bare_list():
+    from unittest.mock import AsyncMock
+
+    with patch("core.redis.pat_list.get_pat_list", new=AsyncMock(return_value=["6", "5"])):
+        result = await get_active_pats(function_id="func_id", _=None)
+
+    assert isinstance(result, dict)
+    assert result == {
+        "status_code": "0",
+        "message": "Get successfully",
+        "content": ["6", "5"],
+    }
+
+
+async def test_active_pats_missing_returns_404():
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+
+    with patch("core.redis.pat_list.get_pat_list", new=AsyncMock(return_value=None)):
+        with pytest.raises(HTTPException) as e:
+            await get_active_pats(function_id="func_id", _=None)
+    assert e.value.status_code == 404
