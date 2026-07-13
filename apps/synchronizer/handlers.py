@@ -59,9 +59,14 @@ async def handle_artifact_message(msg: Msg) -> None:
         )
         await msg.ack()
     except Exception as e:
+        id_label, id_value = {
+            ArtifactType.MODEL: ("model_id", model_id),
+            ArtifactType.KERNEL: ("kernel_id", kernel_id),
+            ArtifactType.PACKAGE: ("package_id", package_id),
+        }[artifact_type]
         logger.error(
             f"Artifact download failed artifact_type={artifact_type} "
-            f"func_id={func_id} version={version}: {e}"
+            f"func_id={func_id} version={version} {id_label}={id_value}: {e}"
         )
         await msg.nak()
 

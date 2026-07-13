@@ -364,7 +364,14 @@ async def get_package_list(
 async def get_active_pats(
     function_id: str,
     _: None = Depends(verify_credentials_path),
-) -> list:
+) -> dict:
+    """
+    Mirrors EdgeService's exact response shape — Model Service expects the
+    full siteMC envelope, not a bare JSON array:
+    {"status_code": "...", "message": "Get successfully", "content": [...]}
+    Redis stores this full envelope verbatim (see core/redis/pat_list.py /
+    core/http/meta_client.py::fetch_pat_list) — served through unchanged.
+    """
     from core.redis.pat_list import get_pat_list as redis_get_pat_list
 
     try:
