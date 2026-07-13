@@ -147,9 +147,18 @@ async def fetch_pat_list(
 ) -> list:
     """
     GET /meta-cache/pats/{function_id}
-    Returns raw PAT list directly: ["1", "2", "3"]
+
+    siteMC wraps this response in the same envelope as model_list:
+    {"status_code": "...", "message": "...", "content": ["1", "2", "3"]}
+    Returns content only.
     """
     settings = get_settings()
     url = f"{settings.SITE_META_CACHE_SERVICE_URL}/meta-cache/pats/{function_id}"
     logger.info(f"Fetching pat_list: function_id={function_id}")
-    return await _get(url, function_id, product_id, account, password)
+    data = await _get(url, function_id, product_id, account, password)
+    content = data.get("content")
+    if content is None:
+        raise ValueError(
+            f"pat_list response missing 'content' field. Got keys: {list(data.keys())}"
+        )
+    return content
