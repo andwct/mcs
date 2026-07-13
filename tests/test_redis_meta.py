@@ -96,12 +96,14 @@ async def test_package_list_round_trip(client):
     assert (key, field) == ("mcs:package_list", "f")
 
 
-async def test_pat_list_round_trip(client):
-    client.hget.return_value = json.dumps(["1", "2", "3"])
-    assert await pat_list.get_pat_list("f") == ["1", "2", "3"]
+async def test_pat_list_round_trip_stores_full_envelope(client):
+    envelope = {"status_code": "0", "message": "Get successfully", "content": ["1", "2", "3"]}
+    client.hget.return_value = json.dumps(envelope)
+    assert await pat_list.get_pat_list("f") == envelope
     client.hget.assert_awaited_once_with("mcs:pat_list", "f")
 
-    await pat_list.set_pat_list("f", ["4"])
+    new_envelope = {"status_code": "0", "message": "Get successfully", "content": ["4"]}
+    await pat_list.set_pat_list("f", new_envelope)
     key, field, value = client.hset.await_args[0]
     assert (key, field) == ("mcs:pat_list", "f")
-    assert json.loads(value) == ["4"]
+    assert json.loads(value) == new_envelope

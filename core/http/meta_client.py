@@ -144,21 +144,25 @@ async def fetch_pat_list(
     product_id: str,
     account: str,
     password: str,
-) -> list:
+) -> dict:
     """
     GET /meta-cache/pats/{function_id}
 
     siteMC wraps this response in the same envelope as model_list:
     {"status_code": "...", "message": "...", "content": ["1", "2", "3"]}
-    Returns content only.
+
+    Unlike model_list/kernel_list/package_list, MCS stores and re-serves the
+    FULL envelope (not just content) — EdgeService's /active_pats endpoint
+    returns the envelope verbatim to Model Service, and Redis has no other
+    source for status_code/message at serve time (see
+    apps/mcs/router.py::get_active_pats).
     """
     settings = get_settings()
     url = f"{settings.SITE_META_CACHE_SERVICE_URL}/meta-cache/pats/{function_id}"
     logger.info(f"Fetching pat_list: function_id={function_id}")
     data = await _get(url, function_id, product_id, account, password)
-    content = data.get("content")
-    if content is None:
+    if "content" not in data:
         raise ValueError(
             f"pat_list response missing 'content' field. Got keys: {list(data.keys())}"
         )
-    return content
+    return data

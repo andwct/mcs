@@ -181,17 +181,19 @@ def test_stream_decrypted_mixed_segments(tmp_path):
 # original module attribute, not an apps.mcs.router name.
 
 async def test_active_pats_returns_full_envelope_not_bare_list():
+    """
+    Redis stores the FULL siteMC envelope for pat_list (unlike the other
+    three meta types) — get_active_pats serves it through unchanged so
+    Model Service sees the exact same shape EdgeService returns.
+    """
     from unittest.mock import AsyncMock
 
-    with patch("core.redis.pat_list.get_pat_list", new=AsyncMock(return_value=["6", "5"])):
+    envelope = {"status_code": "1029312", "message": "Get successfully", "content": ["6", "5"]}
+    with patch("core.redis.pat_list.get_pat_list", new=AsyncMock(return_value=envelope)):
         result = await get_active_pats(function_id="func_id", _=None)
 
     assert isinstance(result, dict)
-    assert result == {
-        "status_code": "0",
-        "message": "Get successfully",
-        "content": ["6", "5"],
-    }
+    assert result == envelope
 
 
 async def test_active_pats_missing_returns_404():

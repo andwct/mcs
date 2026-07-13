@@ -101,11 +101,16 @@ One package per function — full replace on update.
 ```
 Key:   mcs:pat_list
 Field: <function_id>
-Value: JSON ["1", "2", "3"]   (content array as-is from siteMC response)
+Value: JSON {"status_code": "...", "message": "...", "content": ["1", "2", "3"]}
+       (FULL siteMC envelope — not content-only, unlike model_list)
 ```
 
-MCS stores and returns the exact `content` from siteMC response — model
-service uses the same siteMC API contract, so the response shape must not change.
+Unlike the other three meta types, pat_list stores the **full envelope**,
+not just `content`. EdgeService's `/active_pats` endpoint returns the
+envelope verbatim to Model Service — since Redis is the only place MCS
+caches this response, it must retain `status_code`/`message` alongside
+`content` so `apps/mcs/router.py::get_active_pats` can re-serve the exact
+same shape on every cache hit.
 
 ---
 

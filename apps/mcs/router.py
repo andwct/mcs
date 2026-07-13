@@ -367,10 +367,10 @@ async def get_active_pats(
 ) -> dict:
     """
     Mirrors EdgeService's exact response shape — Model Service expects the
-    full envelope, not a bare JSON array:
+    full siteMC envelope, not a bare JSON array:
     {"status_code": "...", "message": "Get successfully", "content": [...]}
-    Redis stores content only (see core/redis/pat_list.py); this endpoint
-    re-wraps it into the envelope on the way out.
+    Redis stores this full envelope verbatim (see core/redis/pat_list.py /
+    core/http/meta_client.py::fetch_pat_list) — served through unchanged.
     """
     from core.redis.pat_list import get_pat_list as redis_get_pat_list
 
@@ -378,7 +378,7 @@ async def get_active_pats(
         record = await redis_get_pat_list(function_id)
         if record is None:
             raise FileNotFoundError(f"pat_list not found for function_id={function_id}")
-        return {"status_code": "0", "message": "Get successfully", "content": record}
+        return record
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:

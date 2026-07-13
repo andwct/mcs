@@ -6,8 +6,12 @@ from core.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def get_pat_list(function_id: str) -> list | None:
-    """HGET mcs:pat_list <function_id> → parsed list or None."""
+async def get_pat_list(function_id: str) -> dict | None:
+    """
+    HGET mcs:pat_list <function_id> → parsed envelope dict or None.
+    Value is the FULL siteMC envelope {"status_code","message","content"},
+    not just the content list — see core/http/meta_client.py::fetch_pat_list.
+    """
     settings = get_settings()
     client = await get_client()
     raw = await client.hget(settings.REDIS_PAT_LIST_KEY, function_id)
@@ -16,18 +20,19 @@ async def get_pat_list(function_id: str) -> list | None:
     return json.loads(raw)
 
 
-async def set_pat_list(function_id: str, content: list) -> None:
+async def set_pat_list(function_id: str, envelope: dict) -> None:
     """
     HSET mcs:pat_list <function_id> <json>
-    Stores content as-is from siteMC response — model service uses
-    same API contract so shape must not change.
+    Stores the full siteMC envelope as-is (status_code, message, content) —
+    apps/mcs/router.py::get_active_pats re-serves it verbatim to Model
+    Service, matching EdgeService's exact response contract.
     """
     settings = get_settings()
     client = await get_client()
     await client.hset(
         settings.REDIS_PAT_LIST_KEY,
         function_id,
-        json.dumps(content),
+        json.dumps(envelope),
     )
     logger.info(f"Redis pat_list updated: function_id={function_id}")
 

@@ -1,11 +1,12 @@
 """
-Unit tests for core/http/meta_client.py — envelope unwrapping per endpoint.
+Unit tests for core/http/meta_client.py — envelope handling per endpoint.
 
 siteMC wraps model_list AND pat_list responses in
 {"status_code", "message", "content": ...}; kernel_list/package_list are
-raw (no envelope). fetch_pat_list previously skipped unwrapping, which
-stored the full envelope dict into Redis and broke /mcs/active_pats
-(FastAPI ResponseValidationError: expected list, got dict).
+raw (no envelope). model_list unwraps to content-only (Redis needs
+per-modelId granularity); pat_list keeps the FULL envelope, since
+EdgeService's /active_pats returns the envelope verbatim to Model Service
+and Redis is the only place that response is ever cached.
 """
 from unittest.mock import AsyncMock, patch
 
@@ -14,12 +15,11 @@ import pytest
 from core.http import meta_client
 
 
-async def test_fetch_pat_list_unwraps_envelope():
+async def test_fetch_pat_list_returns_full_envelope():
     envelope = {"status_code": "1029312", "message": "Get successfully", "content": ["6", "5"]}
     with patch.object(meta_client, "_get", new=AsyncMock(return_value=envelope)):
         result = await meta_client.fetch_pat_list("func_id", "prod_id", "acct", "pw")
-    assert result == ["6", "5"]
-    assert isinstance(result, list)  # matches the /mcs/active_pats -> list response model
+    assert result == envelope  # NOT unwrapped — full envelope is cached and re-served as-is
 
 
 async def test_fetch_pat_list_missing_content_raises():
