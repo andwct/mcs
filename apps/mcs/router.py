@@ -298,6 +298,11 @@ async def get_model_list(
     function_id: str,
     _: None = Depends(verify_credentials_path),
 ) -> dict:
+    """
+    Mirrors EdgeService's exact response shape — Model Service does
+    r.json()["content"]["online"], so the response must be wrapped in the
+    full siteMC envelope, not just {"online", "shadow", "headers"}.
+    """
     from core.redis.model_list import get_model_list as redis_get_model_list
 
     try:
@@ -305,9 +310,13 @@ async def get_model_list(
         if model_map is None:
             raise FileNotFoundError(f"model_list not found for function_id={function_id}")
         return {
-            "online": list(model_map.values()),
-            "shadow": [],
-            "headers": {},
+            "status_code": "0",
+            "message": "Get successfully",
+            "content": {
+                "online": list(model_map.values()),
+                "shadow": [],
+                "headers": {},
+            },
         }
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

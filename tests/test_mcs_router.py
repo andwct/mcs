@@ -20,6 +20,7 @@ from apps.mcs.router import (
     _delete_cache_entry,
     _stream_decrypted,
     get_active_pats,
+    get_model_list,
 )
 
 CHUNK = 65536
@@ -250,5 +251,72 @@ def test_package_download_without_package_id_over_http(tmp_path, monkeypatch):
 
     assert resp.status_code == 200, resp.text  # was 422 before the fix
     assert resp.content == b"pkg-bytes"
+
+    init_product_state([])
+
+
+# ── GET /mcs/model_list — envelope regression (KeyError: 'content') ──────────
+# Model Service does r.json()["content"]["online"] — the response must be
+# wrapped in the full envelope, not the bare {"online","shadow","headers"}
+# shape that was previously returned directly.
+
+async def test_model_list_wraps_content_key():
+    from unittest.mock import AsyncMock
+
+    model_map = {"m1": {"modelId": "m1", "modelName": "a"}}
+    with patch("core.redis.model_list.get_model_list", new=AsyncMock(return_value=model_map)):
+        result = await get_model_list(function_id="func_id", _=None)
+
+    assert "content" in result  # was the missing key causing KeyError client-side
+    assert result["content"]["online"] == [{"modelId": "m1", "modelName": "a"}]
+    assert result["content"]["shadow"] == []
+    assert result["content"]["headers"] == {}
+
+
+async def test_model_list_missing_returns_404():
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+
+    with patch("core.redis.model_list.get_model_list", new=AsyncMock(return_value=None)):
+        with pytest.raises(HTTPException) as e:
+            await get_model_list(function_id="func_id", _=None)
+    assert e.value.status_code == 404
+
+
+def test_model_list_download_over_http(monkeypatch):
+    """
+    Real HTTP layer regression — reproduces Model Service's actual client
+    code: r.json()["content"]["online"] against a live FastAPI response.
+    """
+    from unittest.mock import AsyncMock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import apps.mcs.router as router_module
+    from apps.synchronizer.state import init_product_state
+    from core.models.product import ProductConfig
+
+    init_product_state([ProductConfig(
+        PRODUCT_ID="p1", PRODUCT_NAME="ABC",
+        MODEL_CENTER_ACCOUNT="acct", MODEL_CENTER_PASSWORD="secret",
+        FUNCTION_LIST=["funcID_123"], FUNCTION_NAME_MAPPING={},
+    )])
+
+    app = FastAPI()
+    app.include_router(router_module.router)
+    client = TestClient(app)
+
+    model_map = {"m1": {"modelId": "m1", "modelName": "toy_example"}}
+    monkeypatch.setattr(
+        "core.redis.model_list.get_model_list", AsyncMock(return_value=model_map)
+    )
+
+    resp = client.get(
+        "/mcs/model_list/funcID_123", auth=("acct", "secret")
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    online = body["content"]["online"]  # this line raised KeyError before the fix
+    assert online == [{"modelId": "m1", "modelName": "toy_example"}]
 
     init_product_state([])
