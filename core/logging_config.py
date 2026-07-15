@@ -9,7 +9,7 @@ zoneinfo — avoids depending on the tzdata package on the slim base image
 import logging
 from datetime import datetime, timedelta, timezone
 
-TAIWAN_TZ = timezone(timedelta(hours=8), name="CST")
+TAIWAN_TZ = timezone(timedelta(hours=8), name="+08:00")
 
 
 class TaiwanTimeFormatter(logging.Formatter):
@@ -17,7 +17,7 @@ class TaiwanTimeFormatter(logging.Formatter):
         dt = datetime.fromtimestamp(record.created, tz=TAIWAN_TZ)
         if datefmt:
             return dt.strftime(datefmt)
-        return dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " CST"
+        return dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " +08:00"
 
 
 def configure_logging(level: str) -> None:

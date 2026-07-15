@@ -19,7 +19,7 @@ def test_format_time_converts_utc_epoch_to_taiwan_time():
     formatted = formatter.formatTime(record)
 
     assert formatted.startswith("2026-01-01 08:00:00")
-    assert formatted.endswith("CST")
+    assert formatted.endswith("+08:00")
 
 
 def test_format_time_respects_custom_datefmt():
@@ -43,7 +43,7 @@ def test_configure_logging_prefixes_output_with_timestamp(capsys):
     assert "[INFO] test_logger_taiwan: hello world" in line
     # asctime prefix present — starts with a 4-digit year
     assert line[:4].isdigit()
-    assert "CST" in line
+    assert "+08:00" in line
 
 
 def test_configure_logging_sets_level():
