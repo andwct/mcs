@@ -23,8 +23,14 @@ class KernelRequestModel(BaseModel):
 
 
 class PackageRequestModel(BaseModel):
+    """
+    package_id is optional — siteArtifactService does not require it for
+    PACKAGE downloads (closes the mcs-serving side of issue #38; the
+    synchronizer NATS path was already fixed). Model Service does not send
+    this field in practice.
+    """
     ARTIFACT_TYPE: str = "PACKAGE"
     product_id: str
     function_id: str
-    package_id: str
+    package_id: str | None = None
     package_version: str
