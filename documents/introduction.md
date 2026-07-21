@@ -85,4 +85,4 @@ Head to the deployment guide for step-by-step setup — Helm chart, Redis Sentin
 
 ---
 
-*MCS — making Model Service's life a little faster, one cached file at a time. 🎉*
+*MCS — making Model Service faster and safer, one cached file at a time. 🎉*
