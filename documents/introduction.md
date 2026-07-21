@@ -1,10 +1,10 @@
-# MCS — Model Caching Service 📦
+# MCS — Model Caching Service 📦✨
 
-*A friendly introduction — for the deep technical detail, see the docs linked at the bottom.*
+*A friendly introduction to MCS.*
 
 ---
 
-## What is MCS? 🤔
+## What is MCS? 🧐
 
 MCS (Model Caching Service) is a caching layer that sits between **Model Service** and **siteMC (site Model Center)**. Think of it like a CDN, but for ML model artifacts instead of web assets.
 
@@ -18,11 +18,11 @@ MCS fixes this by keeping a local copy of everything Model Service commonly need
 
 ```mermaid
 flowchart LR
-    MC["🏢 Model Center<br/>(source of truth)"]
-    MU["🔀 MetaUpdater"]
-    SMC["🌐 siteMC<br/>(site Model Center)"]
+    MC["🏛️ Model Center<br/>(source of truth)"]
+    MU["🌉 MetaUpdater"]
+    SMC["🛰️ siteMC<br/>(site Model Center)"]
     MCS["📦 MCS<br/>(this project)"]
-    MS["🤖 Model Service"]
+    MS["🧠 Model Service"]
 
     MC -->|NATS| MU
     MU -->|NATS| SMC
@@ -46,8 +46,8 @@ MCS runs as **3 containers working together** in every pod:
 
 | Container | Job |
 |---|---|
-| 🎧 **synchronizer** | Listens for "something changed" messages from siteMC and downloads new/updated artifacts and metadata ahead of time |
-| 🍽️ **mcs (serving)** | Answers Model Service's requests — serves from local cache when possible, falls back to siteMC when not |
+| 📡 **synchronizer** | Listens for "something changed" messages from siteMC and downloads new/updated artifacts and metadata ahead of time |
+| 🛎️ **mcs (serving)** | Answers Model Service's requests — serves from local cache when possible, falls back to siteMC when not |
 | 🧹 **janitor** | Keeps disk usage under control by cleaning up old, rarely-used files when storage starts filling up |
 
 Together, these three make sure Model Service almost always gets a **fast, local answer** instead of waiting on a round trip to siteMC.
@@ -58,9 +58,9 @@ Together, these three make sure Model Service almost always gets a **fast, local
 
 - **⚡ Faster responses** — Model Service reads from local disk instead of the network most of the time
 - **📉 Less load on siteMC** — fewer repeated requests for the same models/kernels/packages across every Model Service instance
-- **🔒 Secure at rest** — cached model and kernel files are partially encrypted on disk, not sitting around in plaintext
+- **🛡️ Secure at rest** — cached model and kernel files are partially encrypted on disk, not sitting around in plaintext
 - **🧹 Self-managing storage** — the janitor automatically evicts old files before disk fills up, no manual cleanup needed
-- **🔌 No changes needed on Model Service's side** — MCS mirrors the same API contract Model Service already uses
+- **🤝 No changes needed on Model Service's side** — MCS mirrors the same API contract Model Service already uses
 
 ---
 
@@ -79,10 +79,10 @@ Together, these three make sure Model Service almost always gets a **fast, local
 
 ---
 
-## Ready to deploy? 🚀
+## Ready to deploy? 🛠️
 
 Head to the deployment guide for step-by-step setup — Helm chart, Redis Sentinel, Vault secrets, and everything else needed to get MCS running.
 
 ---
 
-*MCS — making Model Service faster and safer. 🎉*
+*MCS — making Model Service faster and safer. 🚀🛡️*
