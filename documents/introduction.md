@@ -79,20 +79,9 @@ Together, these three make sure Model Service almost always gets a **fast, local
 
 ---
 
-## Want to go deeper? 🔍
+## Ready to deploy? 🚀
 
-This page is meant to be a quick orientation. For the real detail:
-
-| Document | What's in it |
-|---|---|
-| [`deployment.md`](./deployment.md) | Step-by-step guide to deploying MCS in your own environment (Helm chart, Redis Sentinel, Vault secrets, etc.) |
-| [`synchronizer-NATS.md`](./synchronizer-NATS.md) | How the synchronizer connects to and consumes from NATS |
-| [`synchronizer-redis.md`](./synchronizer-redis.md) | Redis data model and warm-up/update flow |
-| [`synchronizer-artifact.md`](./synchronizer-artifact.md) | The full artifact download pipeline |
-| [`mcs-serving.md`](./mcs-serving.md) | The 7 serving API endpoints and cache-hit/miss behavior |
-| [`janitor.md`](./janitor.md) | How disk eviction works — watermarks, LRU, triggers |
-| [`partial-encryption.md`](./partial-encryption.md) | How model/kernel files are encrypted at rest |
-| [`meta-updater.md`](./meta-updater.md) | The Model Center → siteMC bridge service |
+Head to the deployment guide for step-by-step setup — Helm chart, Redis Sentinel, Vault secrets, and everything else needed to get MCS running.
 
 ---
 
