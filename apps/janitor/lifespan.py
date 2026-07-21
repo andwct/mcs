@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from core.config.settings import get_settings
+from core.logging_config import configure_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(level=settings.LOG_LEVEL)
+    configure_logging(settings.LOG_LEVEL)
     logger = logging.getLogger(__name__)
     logger.info(
         f"Janitor started: "
