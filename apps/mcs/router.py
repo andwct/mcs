@@ -36,6 +36,12 @@ from core.utils.encryption import (
 from cryptography.fernet import InvalidToken
 from apps.synchronizer.state import get_product_by_func_id
 from apps.mcs.auth import security, verify_credentials_path, verify_credentials_for_function_id
+from core.metrics import (
+    MCS_CACHE_HITS_TOTAL,
+    MCS_CACHE_MISSES_TOTAL,
+    MCS_CACHE_CORRUPT_TOTAL,
+    MCS_SITEMC_FETCH_DURATION_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcs")
@@ -117,6 +123,7 @@ def _try_serve_cached(
     if artifact_type == ArtifactType.PACKAGE:
         logger.info(f"Cache hit: {dest}")
         _touch_atime(dest)
+        MCS_CACHE_HITS_TOTAL.labels(artifact_type=artifact_type.value).inc()
         return StreamingResponse(
             _read_file_chunks(dest, chunk_size),
             media_type="application/octet-stream",
@@ -127,6 +134,9 @@ def _try_serve_cached(
     if not meta_path(dest).exists():
         logger.warning(f"Orphaned artifact without .meta: {dest} — deleting, cache miss")
         _delete_cache_entry(dest)
+        MCS_CACHE_CORRUPT_TOTAL.labels(
+            artifact_type=artifact_type.value, reason="orphaned_meta"
+        ).inc()
         return None
 
     try:
@@ -166,10 +176,14 @@ def _try_serve_cached(
     except ArtifactDecryptionError as e:
         logger.error(f"Corrupt cache entry: {dest} — deleting, cache miss. {e}")
         _delete_cache_entry(dest)
+        MCS_CACHE_CORRUPT_TOTAL.labels(
+            artifact_type=artifact_type.value, reason="decrypt_failure"
+        ).inc()
         return None
 
     logger.info(f"Cache hit (decrypting {len([s for s in segments if s[0] == 'mem'])} chunk(s)): {dest}")
     _touch_atime(dest)
+    MCS_CACHE_HITS_TOTAL.labels(artifact_type=artifact_type.value).inc()
     return StreamingResponse(
         _stream_decrypted(dest, segments, chunk_size),
         media_type="application/octet-stream",
@@ -203,21 +217,25 @@ async def _serve_artifact(
             return response
 
         logger.info(f"Cache miss: {dest} — falling back to siteMC")
+        MCS_CACHE_MISSES_TOTAL.labels(artifact_type=artifact_type.value).inc()
         try:
             product = get_product_by_func_id(function_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="function_id not found")
 
         try:
-            content = await fetch_artifact_bytes(
-                func_id=function_id,
-                product_id=product_id,
-                artifact_type=artifact_type,
-                version=version,
-                account=product.MODEL_CENTER_ACCOUNT,
-                password=product.MODEL_CENTER_PASSWORD,
-                **download_kwargs,
-            )
+            with MCS_SITEMC_FETCH_DURATION_SECONDS.labels(
+                artifact_type=artifact_type.value
+            ).time():
+                content = await fetch_artifact_bytes(
+                    func_id=function_id,
+                    product_id=product_id,
+                    artifact_type=artifact_type,
+                    version=version,
+                    account=product.MODEL_CENTER_ACCOUNT,
+                    password=product.MODEL_CENTER_PASSWORD,
+                    **download_kwargs,
+                )
         except Exception as e:
             logger.error(f"Artifact fetch failed: {e}")
             raise HTTPException(status_code=502, detail=f"Failed to fetch artifact from siteMC: {e}")

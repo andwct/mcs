@@ -4,8 +4,10 @@ from core.k8s.bootstrap import bootstrap_env_from_one_properties
 bootstrap_env_from_one_properties()
 
 from fastapi import FastAPI
+from core.metrics_endpoint import mount_metrics
 from apps.janitor.lifespan import lifespan
 from apps.janitor.router import router
 
 app = FastAPI(title="MCS Janitor", lifespan=lifespan)
 app.include_router(router)
+mount_metrics(app)

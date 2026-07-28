@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from apps.janitor.eviction import run_eviction_sweep
 from core.config.settings import get_settings
+from core.metrics import JANITOR_DISK_USAGE_RATIO
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +28,7 @@ async def _do_eviction() -> None:
         settings = get_settings()
         usage = shutil.disk_usage(settings.STORAGE_PATH)
         pct = usage.used / usage.total
+        JANITOR_DISK_USAGE_RATIO.set(pct)
         logger.info(
             f"Janitor check: used={usage.used / 1024**3:.2f}GB "
             f"total={usage.total / 1024**3:.2f}GB "

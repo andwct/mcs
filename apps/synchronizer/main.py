@@ -9,6 +9,7 @@ bootstrap_env_from_one_properties()
 from fastapi import FastAPI
 from core.config.settings import get_settings
 from core.logging_config import configure_logging
+from core.metrics_endpoint import mount_metrics
 from apps.synchronizer.lifespan import lifespan
 from apps.synchronizer.router import router
 
@@ -17,3 +18,4 @@ configure_logging(settings.LOG_LEVEL)
 
 app = FastAPI(title="MCS Synchronizer", lifespan=lifespan)
 app.include_router(router)
+mount_metrics(app)

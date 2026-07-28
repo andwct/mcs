@@ -14,6 +14,12 @@ from core.http.meta_client import (
 )
 from apps.synchronizer.state import get_product_by_func_id, get_product_by_id
 from core.config.settings import get_settings
+from core.metrics import (
+    SYNC_NATS_MESSAGES_TOTAL,
+    SYNC_ARTIFACT_DOWNLOAD_DURATION_SECONDS,
+    SYNC_ARTIFACT_DOWNLOAD_FAILURES_TOTAL,
+    SYNC_METADATA_UPDATES_TOTAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,7 @@ async def handle_artifact_message(msg: Msg) -> None:
     except Exception as e:
         logger.error(f"Failed to parse ArtifactMessage: {e} raw={msg.data}")
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="artifact", result="ack").inc()
         return
 
     func_id = payload.function_id
@@ -43,21 +50,26 @@ async def handle_artifact_message(msg: Msg) -> None:
     except KeyError as e:
         logger.error(f"Unknown function_id={func_id}: {e}")
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="artifact", result="ack").inc()
         return
 
     try:
-        await _download_artifact(
-            func_id=func_id,
-            product_id=product_id,
-            artifact_type=artifact_type,
-            version=version,
-            model_id=model_id,
-            kernel_id=kernel_id,
-            package_id=package_id,
-            account=product.MODEL_CENTER_ACCOUNT,
-            password=product.MODEL_CENTER_PASSWORD,
-        )
+        with SYNC_ARTIFACT_DOWNLOAD_DURATION_SECONDS.labels(
+            artifact_type=artifact_type.value
+        ).time():
+            await _download_artifact(
+                func_id=func_id,
+                product_id=product_id,
+                artifact_type=artifact_type,
+                version=version,
+                model_id=model_id,
+                kernel_id=kernel_id,
+                package_id=package_id,
+                account=product.MODEL_CENTER_ACCOUNT,
+                password=product.MODEL_CENTER_PASSWORD,
+            )
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="artifact", result="ack").inc()
     except Exception as e:
         id_label, id_value = {
             ArtifactType.MODEL: ("model_id", model_id),
@@ -69,6 +81,8 @@ async def handle_artifact_message(msg: Msg) -> None:
             f"func_id={func_id} version={version} {id_label}={id_value}: {e}"
         )
         await msg.nak()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="artifact", result="nak").inc()
+        SYNC_ARTIFACT_DOWNLOAD_FAILURES_TOTAL.labels(artifact_type=artifact_type.value).inc()
 
 
 async def _download_artifact(
@@ -133,6 +147,7 @@ async def handle_metadata_message(msg: Msg) -> None:
     except Exception as e:
         logger.error(f"Failed to parse MetadataMessage: {e} raw={msg.data}")
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="metadata", result="ack").inc()
         return
 
     func_id = payload.function_id
@@ -144,6 +159,7 @@ async def handle_metadata_message(msg: Msg) -> None:
     except KeyError as e:
         logger.error(f"Unknown product_id={product_id}: {e}")
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="metadata", result="ack").inc()
         return
 
     account = product.MODEL_CENTER_ACCOUNT
@@ -160,17 +176,21 @@ async def handle_metadata_message(msg: Msg) -> None:
     if handler is None:
         logger.warning(f"Unknown meta_type={payload.meta_type} — ignoring")
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="metadata", result="ack").inc()
         return
 
     try:
         await handler(func_id, product_id, account, password, payload)
         await msg.ack()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="metadata", result="ack").inc()
+        SYNC_METADATA_UPDATES_TOTAL.labels(meta_type=payload.meta_type.value).inc()
     except Exception as e:
         logger.error(
             f"Metadata handler failed meta_type={payload.meta_type} "
             f"func_id={func_id}: {e}"
         )
         await msg.nak()
+        SYNC_NATS_MESSAGES_TOTAL.labels(stream="metadata", result="nak").inc()
 
 
 async def _handle_model_list(

@@ -1,7 +1,15 @@
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
+
+from core.metrics import (
+    JANITOR_EVICTION_SWEEPS_TOTAL,
+    JANITOR_FILES_EVICTED_TOTAL,
+    JANITOR_BYTES_FREED_TOTAL,
+    JANITOR_EVICTION_DURATION_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +77,9 @@ def run_eviction_sweep(
     if usage.total == 0:
         return
 
+    start = time.monotonic()
+    files_evicted = 0
+
     candidates = _collect_candidates(root, fab_name)
     candidates.sort(key=lambda x: x[1].st_atime)  # least recently accessed first (LRU)
 
@@ -80,6 +91,7 @@ def run_eviction_sweep(
         try:
             freed_bytes += stat.st_size
             os.remove(file_path)
+            files_evicted += 1
             # Evict the .meta sidecar together with its artifact
             sidecar = file_path.parent / (file_path.name + ".meta")
             try:
@@ -95,6 +107,10 @@ def run_eviction_sweep(
         except FileNotFoundError:
             pass  # already gone — count size anyway since it freed space
 
+    JANITOR_EVICTION_DURATION_SECONDS.observe(time.monotonic() - start)
+    JANITOR_FILES_EVICTED_TOTAL.inc(files_evicted)
+    JANITOR_BYTES_FREED_TOTAL.inc(freed_bytes)
+
     final_used = usage.used - freed_bytes
     if (final_used / usage.total) > low_watermark:
         logger.warning(
@@ -103,8 +119,10 @@ def run_eviction_sweep(
             f"LOW_WATERMARK {low_watermark:.1%}. "
             f"Consider setting JANITOR_LOW_WATERMARK to a higher value."
         )
+        JANITOR_EVICTION_SWEEPS_TOTAL.labels(result="exhausted").inc()
     else:
         logger.info(
             f"Eviction complete: freed {freed_bytes} bytes, "
             f"estimated usage now {final_used / usage.total:.1%}"
         )
+        JANITOR_EVICTION_SWEEPS_TOTAL.labels(result="completed").inc()
