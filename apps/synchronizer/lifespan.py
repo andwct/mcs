@@ -13,6 +13,7 @@ from apps.synchronizer.consumers import (
 from apps.synchronizer.fetch_loop import start_fetch_loops, cancel_fetch_loops
 from apps.synchronizer.state import init_product_state
 from apps.synchronizer.warmup import warm_up_redis
+from core.metrics import SYNC_REDIS_WARMUP_DURATION_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,8 @@ async def lifespan(app: FastAPI):
     #    any NATS update message is processed.
     #    Deduplication: checks Redis before fetching — skips if already
     #    populated by another pod.
-    await warm_up_redis(products)
+    with SYNC_REDIS_WARMUP_DURATION_SECONDS.time():
+        await warm_up_redis(products)
 
     # 8. Per func_id: create artifact pull consumer (broadcast — own consumer per pod)
     for product_id, func_id, artifact_subject, metadata_subject in func_subjects:

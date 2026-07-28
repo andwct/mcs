@@ -237,3 +237,13 @@ zonalStorageClass:
   enabled: true
   prefix: "netapp-san-ssd-dc"
 pvcName: mcs-statefulset-storage
+
+# ── Metrics ──────────────────────────────────────────────────────────────────
+# Each of the 3 containers exposes GET /metrics on its own port (Prometheus
+# text exposition format) — no extra config needed to enable exposition.
+# serviceMonitor requires prometheus-operator CRDs; set enabled=false and
+# scrape {mcs,synchronizer,janitor}-port at /metrics manually if your
+# cluster doesn't run prometheus-operator.
+serviceMonitor:
+  enabled: false
+  interval: "30s"

@@ -1,0 +1,31 @@
+# Requires prometheus-operator CRDs (kube-prometheus-stack or equivalent)
+# installed in the cluster. Scrapes GET /metrics on all 3 containers —
+# each exposes its own Prometheus endpoint on its own named port via the
+# headless service defined in service.yaml.
+#
+# If your cluster does not run prometheus-operator, set
+# serviceMonitor.enabled=false and scrape {mcs,synchronizer,janitor}-port
+# directly at /metrics using your own Prometheus scrape_config.
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.configMap.namespace }}
+  labels:
+    app: {{ .Values.app }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.app }}
+  endpoints:
+    - port: mcs-port
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+    - port: synchronizer-port
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+    - port: janitor-port
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

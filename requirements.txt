@@ -33,3 +33,6 @@ blake3
 # Async support
 python-multipart==0.0.9
 anyio>=4.0.0
+
+# Metrics
+prometheus-client==0.21.0
